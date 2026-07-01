@@ -144,15 +144,6 @@ python -m compileall -q src run_app.py run_audit.py scripts
 
 GitHub Actions также запускает тесты из `.github/workflows/tests.yml`.
 
-## Публикация через GitHub Desktop
-
-Если репозиторий уже привязан к GitHub, откройте папку проекта в GitHub Desktop и нажмите `Push origin`.
-
-```powershell
-github .
-```
-
-Если remote ещё не настроен, в GitHub Desktop выберите `Publish repository`, задайте имя репозитория, проверьте, что не добавляются `outputs/`, `.codex/`, `.agents/`, `.worktrees/`, локальные базы и отчёты, затем опубликуйте репозиторий.
 
 ## Лицензия
 
