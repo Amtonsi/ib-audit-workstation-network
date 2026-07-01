@@ -272,6 +272,83 @@ def build_pdf(output_path: str | Path) -> Path:
         c.drawString(content_x + 18, y + 68, "Running collector: system_hardware")
         c.drawString(content_x + 18, y + 56, "Assessing vulnerabilities...")
 
+    def draw_cover_window(x: float, y: float, w: float, h: float) -> None:
+        c.setFillColor(colors.white)
+        c.setStrokeColor(line)
+        c.roundRect(x, y, w, h, 10, stroke=1, fill=1)
+
+        header_h = 56
+        rail_w = 100
+        c.setFillColor(colors.HexColor("#172126"))
+        c.rect(x, y + h - header_h, w, header_h, stroke=0, fill=1)
+        set_font(13, bold=True, color=colors.white)
+        c.drawString(x + 14, y + h - 28, "IB Audit Workstation")
+        set_font(6.5, color=colors.HexColor("#B8C4C9"))
+        c.drawString(x + 14, y + h - 43, "Рабочая станция ИБ")
+        c.setFillColor(teal)
+        c.rect(x + w - 72, y + h - 39, 56, 24, stroke=0, fill=1)
+        set_font(7.2, bold=True, color=colors.white)
+        c.drawCentredString(x + w - 44, y + h - 30, "Готово")
+
+        body_h = h - header_h
+        c.setFillColor(colors.white)
+        c.rect(x, y, rail_w, body_h, stroke=0, fill=1)
+        c.setStrokeColor(line)
+        c.line(x + rail_w, y, x + rail_w, y + body_h)
+        set_font(6.5, bold=True, color=muted)
+        c.drawString(x + 12, y + body_h - 24, "НОВЫЙ АНАЛИЗ")
+
+        def nav_button(text: str, yy: float, active: bool = False) -> None:
+            c.setFillColor(teal if active else colors.HexColor("#EDF2F4"))
+            c.rect(x + 12, yy, rail_w - 24, 24, stroke=0, fill=1)
+            set_font(6.7, bold=True, color=colors.white if active else ink)
+            c.drawCentredString(x + rail_w / 2, yy + 8, text)
+
+        nav_button("Полный аудит", y + body_h - 58, active=True)
+        nav_button("Проверить HTML", y + body_h - 88)
+        nav_button("Обновить базы", y + body_h - 118)
+        set_font(6.5, bold=True, color=muted)
+        c.drawString(x + 12, y + body_h - 152, "РЕЗУЛЬТАТЫ")
+        nav_button("Открыть отчёт", y + body_h - 186)
+        set_font(6.1, color=muted)
+        c.drawString(x + 12, y + 28, "Разработал: Абдрахманов")
+        c.drawString(x + 12, y + 16, "Амаль Даулетович")
+
+        content_x = x + rail_w + 12
+        content_w = w - rail_w - 24
+        panel_h = 36
+        for idx, (title_text, tag_text, tag_fill, tag_color) in enumerate(
+            [
+                ("Источники", "CISA / NVD / ФСТЭК", light_blue, blue),
+                ("Режим проверки", "Быстрый кэш", light_amber, amber),
+                ("Папка отчётов", "outputs", light_amber, amber),
+            ]
+        ):
+            yy = y + h - header_h - 18 - idx * 48 - panel_h
+            card(content_x, yy, content_w, panel_h, fill=colors.white, radius=5)
+            set_font(7.2, bold=True, color=ink)
+            c.drawString(content_x + 8, yy + 22, title_text)
+            c.setFillColor(tag_fill)
+            c.roundRect(content_x + 8, yy + 6, content_w - 16, 13, 6.5, stroke=0, fill=1)
+            set_font(6.2, bold=True, color=tag_color)
+            c.drawCentredString(content_x + content_w / 2, yy + 10, tag_text)
+
+        log_y = y + 20
+        log_h = 58
+        card(content_x, log_y, content_w, log_h, fill=colors.white, radius=5)
+        set_font(7.2, bold=True, color=ink)
+        c.drawString(content_x + 8, log_y + 42, "Журнал")
+        set_font(6.1, color=muted)
+        c.drawString(content_x + 8, log_y + 30, "Прогресс: аудит")
+        c.setFillColor(colors.HexColor("#DDE6E8"))
+        c.rect(content_x + 8, log_y + 20, content_w - 16, 6, stroke=0, fill=1)
+        c.setFillColor(teal)
+        c.rect(content_x + 8, log_y + 20, (content_w - 16) * 0.55, 6, stroke=0, fill=1)
+        c.setFillColor(colors.HexColor("#F8FAFB"))
+        c.rect(content_x + 8, log_y + 6, content_w - 16, 10, stroke=0, fill=1)
+        set_font(5.5, color=muted)
+        c.drawString(content_x + 12, log_y + 9, "Assessing vulnerabilities...")
+
     # Page 1 - cover
     c.setFillColor(colors.HexColor("#172126"))
     c.rect(0, 0, page_width, page_height, stroke=0, fill=1)
@@ -302,7 +379,7 @@ def build_pdf(output_path: str | Path) -> Path:
     c.drawString(205, y, f"Дата инструкции: {date.today().strftime('%d.%m.%Y')}")
     y -= 34
     draw_link("GitHub: Amtonsi/ib-audit-workstation", GITHUB_REPO, 205, y, size=12)
-    draw_simple_window(560, 120, 230, 300)
+    draw_cover_window(548, 112, 252, 308)
     c.showPage()
 
     # Page 2 - GitHub and quick start
