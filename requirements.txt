@@ -1,0 +1,4 @@
+# The current Python 3.14 environment may not have PySide6 wheels available.
+# The delivered app runs with the standard-library tkinter GUI.
+PySide6>=6.7; python_version < "3.14"
+pyinstaller>=6.0

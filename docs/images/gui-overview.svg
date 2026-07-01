@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="720" viewBox="0 0 1180 720" role="img" aria-labelledby="title desc">
+  <title id="title">Синтетический макет главного окна IB Audit Workstation</title>
+  <desc id="desc">Схема интерфейса без реальных данных аудита</desc>
+  <defs>
+    <style>
+      .bg{fill:#f3f6f8}.header{fill:#172126}.panel{fill:#fff}.rail{fill:#fff}.muted{fill:#62727a}.text{fill:#172126}
+      .title{font:700 28px Segoe UI,Arial,sans-serif;fill:#fff}.small{font:400 14px Segoe UI,Arial,sans-serif}
+      .label{font:600 17px Segoe UI,Arial,sans-serif;fill:#172126}.tiny{font:400 12px Segoe UI,Arial,sans-serif}
+      .button{fill:#0f766e}.button2{fill:#edf2f4}.line{stroke:#dce3e7;stroke-width:1}.credit{font:400 14px Segoe UI,Arial,sans-serif;fill:#62727a}
+      .callout{fill:#fff7ed;stroke:#fdba74;stroke-width:2}.badge{fill:#e8f0ff}.danger{fill:#fee2e2}.ok{fill:#dcfce7}
+    </style>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1180" height="720"/>
+  <rect class="header" x="0" y="0" width="1180" height="118"/>
+  <text class="title" x="32" y="55">IB Audit Workstation</text>
+  <text class="small" x="32" y="84" fill="#b8c4c9">Рабочая станция специалиста информационной безопасности</text>
+  <rect x="990" y="34" width="138" height="44" rx="2" fill="#0f766e"/>
+  <text class="tiny" x="1020" y="61" fill="#fff" font-weight="700">Готово</text>
+
+  <rect class="rail" x="0" y="118" width="306" height="552"/>
+  <text class="tiny" x="22" y="160" fill="#62727a" font-weight="700">НОВЫЙ АНАЛИЗ</text>
+  <rect class="button" x="22" y="180" width="254" height="46" rx="0"/>
+  <text class="small" x="62" y="210" fill="#fff" font-weight="700">Полный аудит компьютера</text>
+  <rect class="button2" x="22" y="238" width="254" height="46"/>
+  <text class="small text" x="58" y="268" font-weight="700">Проверить HTML-отчёты</text>
+  <rect class="button2" x="22" y="296" width="254" height="46"/>
+  <text class="small text" x="78" y="326" font-weight="700">Обновить базы</text>
+  <rect class="button2" x="22" y="354" width="254" height="46"/>
+  <text class="small muted" x="102" y="384">Отменить</text>
+  <line class="line" x1="22" y1="426" x2="276" y2="426"/>
+  <text class="tiny" x="22" y="470" fill="#62727a" font-weight="700">РЕЗУЛЬТАТЫ</text>
+  <rect class="button2" x="22" y="490" width="254" height="46"/>
+  <text class="small text" x="56" y="520" font-weight="700">Открыть последний отчёт</text>
+  <text class="tiny muted" x="22" y="620">Локальная обработка инвентаризации.</text>
+  <text class="tiny muted" x="22" y="642">Сетевые запросы только к выбранным</text>
+  <text class="tiny muted" x="22" y="664">источникам уязвимостей.</text>
+
+  <g transform="translate(334 142)">
+    <rect class="panel" width="804" height="66"/>
+    <text class="label" x="20" y="38">Источники проверки</text>
+    <rect class="badge" x="218" y="17" width="80" height="34"/>
+    <text class="tiny" x="235" y="39" fill="#2563eb" font-weight="700">CISA KEV</text>
+    <rect x="312" y="17" width="58" height="34" fill="#f0edff"/>
+    <text class="tiny" x="330" y="39" fill="#6d4aff" font-weight="700">NVD</text>
+    <rect x="384" y="17" width="94" height="34" fill="#fff1e7"/>
+    <text class="tiny" x="406" y="39" fill="#b45309" font-weight="700">ФСТЭК</text>
+  </g>
+  <g transform="translate(334 224)">
+    <rect class="panel" width="804" height="66"/>
+    <text class="label" x="20" y="38">Режим проверки уязвимостей</text>
+    <circle cx="306" cy="33" r="6" fill="#fff" stroke="#888"/>
+    <text class="tiny text" x="320" y="38">Полный онлайн ФСТЭК</text>
+    <circle cx="484" cy="33" r="6" fill="#172126"/>
+    <text class="tiny text" x="498" y="38">Быстро: кэш NVD/CISA</text>
+  </g>
+  <g transform="translate(334 306)">
+    <rect class="panel" width="804" height="98"/>
+    <text class="label" x="20" y="36">Папка отчётов</text>
+    <rect x="20" y="52" width="764" height="30" fill="#f7f9fa" stroke="#9ca3af"/>
+    <text class="tiny muted" x="32" y="72">outputs</text>
+  </g>
+  <g transform="translate(334 420)">
+    <rect class="panel" width="804" height="210"/>
+    <text class="label" x="20" y="36">Журнал выполнения</text>
+    <text class="tiny muted" x="20" y="72">Прогресс: ожидание</text>
+    <rect x="20" y="88" width="764" height="18" fill="#dde6e8"/>
+    <rect x="20" y="88" width="424" height="18" fill="#0f766e"/>
+    <rect x="20" y="122" width="764" height="68" fill="#f8fafb"/>
+    <text class="tiny muted" x="34" y="148">Running collector: system_hardware</text>
+    <text class="tiny muted" x="34" y="170">Assessing vulnerabilities...</text>
+  </g>
+
+  <rect class="callout" x="766" y="652" width="372" height="42" rx="8"/>
+  <text class="credit" x="790" y="678">Разработал: Абдрахманов Амаль Даулетович</text>
+</svg>

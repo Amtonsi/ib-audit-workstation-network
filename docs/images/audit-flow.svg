@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="230" viewBox="0 0 980 230" role="img" aria-label="IB Audit Workstation audit flow">
+  <rect width="980" height="230" fill="#f8fafc"/>
+  <style>
+    .box{fill:#ffffff;stroke:#0f172a;stroke-width:1.4;rx:14}
+    .title{font:700 18px Segoe UI,Arial,sans-serif;fill:#0f172a}
+    .text{font:14px Segoe UI,Arial,sans-serif;fill:#334155}
+    .arrow{stroke:#2563eb;stroke-width:3;marker-end:url(#arrow)}
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#2563eb"/>
+    </marker>
+  </defs>
+  <rect class="box" x="30" y="55" width="165" height="110"/>
+  <text class="title" x="55" y="90">Windows</text>
+  <text class="text" x="55" y="120">admin run</text>
+  <text class="text" x="55" y="142">read-only</text>
+  <line class="arrow" x1="205" y1="110" x2="270" y2="110"/>
+  <rect class="box" x="280" y="55" width="175" height="110"/>
+  <text class="title" x="310" y="90">Collectors</text>
+  <text class="text" x="310" y="120">WinAudit-style</text>
+  <text class="text" x="310" y="142">full inventory</text>
+  <line class="arrow" x1="465" y1="110" x2="530" y2="110"/>
+  <rect class="box" x="540" y="55" width="175" height="110"/>
+  <text class="title" x="570" y="90">Assessment</text>
+  <text class="text" x="570" y="120">rules + CVE</text>
+  <text class="text" x="570" y="142">NVD CISA BDU</text>
+  <line class="arrow" x1="725" y1="110" x2="790" y2="110"/>
+  <rect class="box" x="800" y="55" width="150" height="110"/>
+  <text class="title" x="830" y="90">Reports</text>
+  <text class="text" x="830" y="120">HTML</text>
+  <text class="text" x="830" y="142">SQLite history</text>
+</svg>

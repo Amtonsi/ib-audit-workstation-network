@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="620" viewBox="0 0 1180 620" role="img" aria-labelledby="title desc">
+  <title id="title">Сводный HTML-отчёт по нескольким документам</title>
+  <desc id="desc">Синтетическая схема отчёта без реальных компьютеров</desc>
+  <defs>
+    <style>
+      .bg{fill:#f3f6f8}.side{fill:#172126}.panel{fill:#fff;stroke:#dce3e7}.title{font:700 24px Segoe UI,Arial,sans-serif;fill:#172126}
+      .nav{font:600 13px Segoe UI,Arial,sans-serif;fill:#d7e0e3}.small{font:400 13px Segoe UI,Arial,sans-serif;fill:#64748b}
+      .text{font:400 15px Segoe UI,Arial,sans-serif;fill:#172126}.badge{font:700 12px Segoe UI,Arial,sans-serif}
+      .bar1{fill:#b91c1c}.bar2{fill:#f97316}.bar3{fill:#0f766e}.line{stroke:#e5e7eb}
+    </style>
+  </defs>
+  <rect class="bg" width="1180" height="620"/>
+  <rect class="side" width="252" height="620"/>
+  <text x="28" y="46" font-family="Segoe UI,Arial" font-size="24" font-weight="700" fill="#fff">IB Audit</text>
+  <text class="nav" x="28" y="92">Сводка</text>
+  <text class="nav" x="28" y="126">Сравнение компьютеров</text>
+  <text class="nav" x="28" y="160">Повторяющиеся риски</text>
+  <text class="nav" x="28" y="194">Документы</text>
+  <text class="nav" x="28" y="228">Ошибки импорта</text>
+
+  <g transform="translate(286 32)">
+    <rect class="panel" width="852" height="104" rx="10"/>
+    <text class="title" x="24" y="42">Сводный отчёт проверки HTML</text>
+    <text class="small" x="24" y="72">3 документа выбрано · 2 обработано · 1 файл с ошибкой · исходные документы не изменялись</text>
+    <rect x="690" y="28" width="126" height="34" rx="17" fill="#ffedd5"/>
+    <text class="badge" x="714" y="50" fill="#9a3412">Есть ошибки</text>
+  </g>
+
+  <g transform="translate(286 160)">
+    <rect class="panel" width="260" height="108" rx="10"/>
+    <text class="small" x="22" y="34">Критические риски</text>
+    <text x="22" y="76" font-family="Segoe UI,Arial" font-size="34" font-weight="700" fill="#b91c1c">4</text>
+  </g>
+  <g transform="translate(578 160)">
+    <rect class="panel" width="260" height="108" rx="10"/>
+    <text class="small" x="22" y="34">Высокие риски</text>
+    <text x="22" y="76" font-family="Segoe UI,Arial" font-size="34" font-weight="700" fill="#f97316">11</text>
+  </g>
+  <g transform="translate(870 160)">
+    <rect class="panel" width="268" height="108" rx="10"/>
+    <text class="small" x="22" y="34">Покрытие инвентаря</text>
+    <text x="22" y="76" font-family="Segoe UI,Arial" font-size="34" font-weight="700" fill="#0f766e">100%</text>
+  </g>
+
+  <g transform="translate(286 298)">
+    <rect class="panel" width="852" height="142" rx="10"/>
+    <text class="title" x="24" y="40" font-size="18">Сравнение документов</text>
+    <text class="text" x="24" y="78">WORKSTATION-01</text><rect class="bar1" x="180" y="62" width="280" height="20"/><rect class="bar2" x="460" y="62" width="150" height="20"/><rect class="bar3" x="610" y="62" width="92" height="20"/>
+    <text class="text" x="24" y="112">WORKSTATION-02</text><rect class="bar1" x="180" y="96" width="90" height="20"/><rect class="bar2" x="270" y="96" width="210" height="20"/><rect class="bar3" x="480" y="96" width="250" height="20"/>
+  </g>
+
+  <g transform="translate(286 466)">
+    <rect class="panel" width="852" height="108" rx="10"/>
+    <text class="title" x="24" y="38" font-size="18">Повторяющиеся находки</text>
+    <line class="line" x1="24" y1="56" x2="820" y2="56"/>
+    <text class="small" x="24" y="82">CVE-20XX-0001 · найдено в 2 документах · требуется обновление версии</text>
+  </g>
+</svg>

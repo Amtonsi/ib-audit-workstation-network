@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="520" viewBox="0 0 1180 520" role="img" aria-labelledby="title desc">
+  <title id="title">Логика обработки IB Audit Workstation</title>
+  <desc id="desc">Схема pipeline без реальных результатов аудита</desc>
+  <defs>
+    <style>
+      .bg{fill:#f8fafc}.box{fill:#fff;stroke:#dce3e7;stroke-width:2}.accent{fill:#0f766e}.muted{fill:#64748b}
+      .title{font:700 22px Segoe UI,Arial,sans-serif;fill:#172126}.text{font:400 15px Segoe UI,Arial,sans-serif;fill:#172126}
+      .small{font:400 13px Segoe UI,Arial,sans-serif;fill:#64748b}.arrow{stroke:#0f766e;stroke-width:3;marker-end:url(#arrow)}
+      .status{font:700 13px Segoe UI,Arial,sans-serif}
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#0f766e"/>
+    </marker>
+  </defs>
+  <rect class="bg" width="1180" height="520"/>
+  <text class="title" x="36" y="48">Логика работы ПО</text>
+  <text class="small" x="36" y="76">Все примеры на схеме условные и не содержат данных реального компьютера.</text>
+
+  <g transform="translate(40 122)">
+    <rect class="box" width="190" height="130" rx="14"/>
+    <text class="text" x="22" y="38" font-weight="700">1. Источники</text>
+    <text class="small" x="22" y="68">Windows collectors</text>
+    <text class="small" x="22" y="92">HTML import</text>
+    <text class="small" x="22" y="116">CISA/NVD/ФСТЭК</text>
+  </g>
+  <line class="arrow" x1="244" y1="187" x2="304" y2="187"/>
+
+  <g transform="translate(320 122)">
+    <rect class="box" width="190" height="130" rx="14"/>
+    <text class="text" x="22" y="38" font-weight="700">2. Нормализация</text>
+    <text class="small" x="22" y="68">InventoryObject</text>
+    <text class="small" x="22" y="92">Diagnostics</text>
+    <text class="small" x="22" y="116">Evidence fields</text>
+  </g>
+  <line class="arrow" x1="524" y1="187" x2="584" y2="187"/>
+
+  <g transform="translate(600 122)">
+    <rect class="box" width="190" height="130" rx="14"/>
+    <text class="text" x="22" y="38" font-weight="700">3. Оценка</text>
+    <text class="small" x="22" y="68">Rulepacks JSON</text>
+    <text class="small" x="22" y="92">CVE correlation</text>
+    <text class="small" x="22" y="116">Risk scoring</text>
+  </g>
+  <line class="arrow" x1="804" y1="187" x2="864" y2="187"/>
+
+  <g transform="translate(880 122)">
+    <rect class="box" width="230" height="130" rx="14"/>
+    <text class="text" x="22" y="38" font-weight="700">4. Результат</text>
+    <text class="small" x="22" y="68">SQLite history</text>
+    <text class="small" x="22" y="92">HTML report</text>
+    <text class="small" x="22" y="116">Batch summary</text>
+  </g>
+
+  <g transform="translate(136 316)">
+    <rect class="box" width="906" height="128" rx="14"/>
+    <text class="text" x="26" y="38" font-weight="700">Статусы объектов</text>
+    <rect x="26" y="60" width="130" height="32" rx="16" fill="#fee2e2"/><text class="status" x="58" y="81" fill="#991b1b">risk</text>
+    <rect x="176" y="60" width="130" height="32" rx="16" fill="#dcfce7"/><text class="status" x="218" y="81" fill="#166534">passed</text>
+    <rect x="326" y="60" width="190" height="32" rx="16" fill="#ffedd5"/><text class="status" x="359" y="81" fill="#9a3412">insufficient_data</text>
+    <rect x="536" y="60" width="170" height="32" rx="16" fill="#e2e8f0"/><text class="status" x="571" y="81" fill="#475569">not_applicable</text>
+    <text class="small" x="26" y="112">Отсутствие данных не считается безопасным состоянием — оно явно попадает в отчёт.</text>
+  </g>
+</svg>

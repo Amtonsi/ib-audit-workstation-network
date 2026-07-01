@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="500" viewBox="0 0 1180 500" role="img" aria-labelledby="title desc">
+  <title id="title">Граница приватности публичного репозитория</title>
+  <desc id="desc">Схема показывает, какие файлы безопасны для GitHub, а какие остаются локально</desc>
+  <defs>
+    <style>
+      .bg{fill:#f8fafc}.safe{fill:#ecfdf5;stroke:#10b981;stroke-width:2}.local{fill:#fff7ed;stroke:#f97316;stroke-width:2}
+      .title{font:700 24px Segoe UI,Arial,sans-serif;fill:#172126}.text{font:400 15px Segoe UI,Arial,sans-serif;fill:#172126}
+      .small{font:400 13px Segoe UI,Arial,sans-serif;fill:#64748b}.head{font:700 18px Segoe UI,Arial,sans-serif;fill:#172126}
+      .arrow{stroke:#64748b;stroke-width:2;stroke-dasharray:8 6;marker-end:url(#arrow)}
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <rect class="bg" width="1180" height="500"/>
+  <text class="title" x="42" y="52">Публичный репозиторий без конфиденциальных данных</text>
+  <text class="small" x="42" y="80">В README используются только синтетические иллюстрации и условные имена.</text>
+
+  <rect class="safe" x="70" y="126" width="450" height="286" rx="18"/>
+  <text class="head" x="100" y="168">Можно публиковать</text>
+  <text class="text" x="100" y="210">src/ — исходный код</text>
+  <text class="text" x="100" y="242">tests/ — автоматические тесты</text>
+  <text class="text" x="100" y="274">docs/images/ — безопасные SVG-схемы</text>
+  <text class="text" x="100" y="306">README.md, LICENSE, SECURITY.md</text>
+  <text class="text" x="100" y="338">build/pyinstaller/IBAuditWorkstation.spec</text>
+  <text class="text" x="100" y="370">.github/workflows/tests.yml</text>
+
+  <rect class="local" x="660" y="126" width="450" height="286" rx="18"/>
+  <text class="head" x="690" y="168">Остаётся локально</text>
+  <text class="text" x="690" y="210">outputs/ — отчёты, базы, релизы</text>
+  <text class="text" x="690" y="242">*.db, *.sqlite — история аудита</text>
+  <text class="text" x="690" y="274">реальные HTML-отчёты компьютеров</text>
+  <text class="text" x="690" y="306">логи с путями, IP и пользователями</text>
+  <text class="text" x="690" y="338">локальные Codex/GitHub Desktop файлы</text>
+  <text class="text" x="690" y="370">временные build/work артефакты</text>
+
+  <line class="arrow" x1="540" y1="268" x2="640" y2="268"/>
+  <text class="small" x="520" y="456">Проверка перед публикацией: git status, .gitignore, тесты, UTF-8 README.</text>
+</svg>
