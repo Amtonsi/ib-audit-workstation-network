@@ -9,7 +9,8 @@ sys.path.insert(0, os.path.abspath("src"))
 
 from ib_audit.gui_tk import (
     AuditWindow, SOURCE_LABELS, format_result_message, format_source_status,
-    presentation_for, progress_value_for_message,
+    presentation_for, progress_value_for_message, responsive_layout_for_width,
+    window_bounds_for_screen,
 )
 from ib_audit.batch import BatchProgress
 from ib_audit.cancellation import CancellationToken
@@ -62,6 +63,29 @@ class FakeWidget:
 
 
 class AuditWindowReportImportTests(unittest.TestCase):
+    def test_window_bounds_fit_small_laptop_screen(self):
+        bounds = window_bounds_for_screen(1024, 600)
+
+        self.assertLessEqual(bounds.width, 976)
+        self.assertLessEqual(bounds.height, 536)
+        self.assertLessEqual(bounds.min_width, bounds.width)
+        self.assertLessEqual(bounds.min_height, bounds.height)
+
+    def test_window_bounds_keep_comfortable_desktop_default(self):
+        bounds = window_bounds_for_screen(1920, 1080)
+
+        self.assertEqual((1080, 740), (bounds.width, bounds.height))
+        self.assertEqual((860, 560), (bounds.min_width, bounds.min_height))
+
+    def test_responsive_layout_reduces_rail_and_wraps_text_on_narrow_window(self):
+        desktop = responsive_layout_for_width(1080)
+        narrow = responsive_layout_for_width(800)
+
+        self.assertLess(narrow.rail_width, desktop.rail_width)
+        self.assertLess(narrow.workspace_padding[0], desktop.workspace_padding[0])
+        self.assertLess(narrow.path_wraplength, desktop.path_wraplength)
+        self.assertGreaterEqual(narrow.path_wraplength, 320)
+
     def test_result_message_includes_risk_coverage_and_insufficient(self):
         message = format_result_message({
             "inventory_count": 200, "diagnostic_count": 4, "risk_count": 18,

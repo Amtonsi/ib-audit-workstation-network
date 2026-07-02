@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import queue
 import re
+import sys
 import threading
 import webbrowser
 from dataclasses import dataclass
@@ -53,6 +54,103 @@ class WindowPresentation:
     text: str
     tone: str
     busy: bool
+
+
+@dataclass(frozen=True)
+class WindowBounds:
+    width: int
+    height: int
+    min_width: int
+    min_height: int
+
+
+@dataclass(frozen=True)
+class ResponsiveLayout:
+    rail_width: int
+    rail_padding: tuple[int, int]
+    workspace_padding: tuple[int, int, int, int]
+    header_padding: tuple[int, int]
+    footer_padding: tuple[int, int, int, int]
+    path_wraplength: int
+    status_wraplength: int
+    note_wraplength: int
+    header_wraplength: int
+
+
+def _safe_screen_value(value: int, fallback: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return parsed if parsed > 0 else fallback
+
+
+def window_bounds_for_screen(screen_width: int, screen_height: int) -> WindowBounds:
+    width = _safe_screen_value(screen_width, 1366)
+    height = _safe_screen_value(screen_height, 768)
+    available_width = max(640, width - 48)
+    available_height = max(480, height - 64)
+    window_width = max(min(760, available_width), min(1080, available_width))
+    window_height = max(min(520, available_height), min(740, available_height))
+    return WindowBounds(
+        width=window_width,
+        height=window_height,
+        min_width=min(860, window_width),
+        min_height=min(560, window_height),
+    )
+
+
+def responsive_layout_for_width(width: int) -> ResponsiveLayout:
+    window_width = max(640, int(width or 1080))
+    if window_width < 880:
+        return ResponsiveLayout(
+            rail_width=218,
+            rail_padding=(14, 16),
+            workspace_padding=(12, 12, 12, 12),
+            header_padding=(18, 14),
+            footer_padding=(14, 4, 16, 8),
+            path_wraplength=max(320, window_width - 430),
+            status_wraplength=max(220, window_width - 520),
+            note_wraplength=180,
+            header_wraplength=max(320, window_width - 260),
+        )
+    if window_width < 1040:
+        return ResponsiveLayout(
+            rail_width=248,
+            rail_padding=(16, 18),
+            workspace_padding=(16, 16, 18, 14),
+            header_padding=(22, 16),
+            footer_padding=(18, 4, 20, 8),
+            path_wraplength=max(420, window_width - 470),
+            status_wraplength=max(260, window_width - 560),
+            note_wraplength=206,
+            header_wraplength=max(420, window_width - 290),
+        )
+    return ResponsiveLayout(
+        rail_width=286,
+        rail_padding=(20, 22),
+        workspace_padding=(22, 20, 24, 18),
+        header_padding=(26, 18),
+        footer_padding=(20, 4, 24, 8),
+        path_wraplength=max(560, window_width - 430),
+        status_wraplength=max(320, window_width - 620),
+        note_wraplength=232,
+        header_wraplength=max(560, window_width - 320),
+    )
+
+
+def _enable_high_dpi_awareness() -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        return
 
 
 FSTEC_PROGRESS_RE = re.compile(r"(?:фстэк|фстек|fstec).*?(\d+)\s*/\s*(\d+)", re.IGNORECASE)
@@ -177,10 +275,15 @@ def progress_value_for_message(message: str, current: int) -> int:
 
 class AuditWindow:
     def __init__(self) -> None:
+        _enable_high_dpi_awareness()
         self.root = Tk()
         self.root.title("IB Audit Workstation")
-        self.root.geometry("1080x740")
-        self.root.minsize(940, 640)
+        self.window_bounds = window_bounds_for_screen(
+            self.root.winfo_screenwidth(),
+            self.root.winfo_screenheight(),
+        )
+        self.root.geometry(f"{self.window_bounds.width}x{self.window_bounds.height}")
+        self.root.minsize(self.window_bounds.min_width, self.window_bounds.min_height)
         self.root.configure(background=COLORS["canvas"])
         self.output_dir = StringVar(value=str(default_output_dir()))
         self.db_path = StringVar(value=str(default_output_dir() / "ib_audit.db"))
@@ -336,13 +439,20 @@ class AuditWindow:
     def _build(self) -> None:
         shell = ttk.Frame(self.root, style="App.TFrame")
         shell.pack(fill=BOTH, expand=True)
+        self.shell = shell
 
         header = ttk.Frame(shell, style="Header.TFrame", padding=(26, 18))
         header.pack(fill=X)
+        self.header = header
         heading = ttk.Frame(header, style="Header.TFrame")
         heading.pack(side=LEFT, fill=X, expand=True)
         ttk.Label(heading, text="IB Audit Workstation", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(heading, text="Рабочая станция специалиста информационной безопасности", style="HeaderMuted.TLabel").pack(
+        self.header_subtitle = ttk.Label(
+            heading,
+            text="Рабочая станция специалиста информационной безопасности",
+            style="HeaderMuted.TLabel",
+        )
+        self.header_subtitle.pack(
             anchor="w", pady=(3, 0)
         )
         self.status_badge = ttk.Label(header, textvariable=self.status, style="Ready.TLabel")
@@ -350,14 +460,18 @@ class AuditWindow:
 
         footer = ttk.Frame(shell, style="Footer.TFrame", padding=(20, 4, 24, 8))
         footer.pack(side="bottom", fill=X)
-        ttk.Label(footer, text=DEVELOPER_CREDIT, style="Footer.TLabel").pack(side=RIGHT)
+        self.footer = footer
+        self.footer_credit = ttk.Label(footer, text=DEVELOPER_CREDIT, style="Footer.TLabel")
+        self.footer_credit.pack(side=RIGHT)
 
         body = ttk.Frame(shell, style="App.TFrame")
         body.pack(fill=BOTH, expand=True)
+        self.body = body
 
         rail = ttk.Frame(body, style="Rail.TFrame", width=286, padding=(20, 22))
         rail.pack(side=LEFT, fill=Y)
         rail.pack_propagate(False)
+        self.rail = rail
         ttk.Label(rail, text="НОВЫЙ АНАЛИЗ", style="RailSection.TLabel").pack(anchor="w", pady=(0, 12))
 
         live_button = ttk.Button(
@@ -409,15 +523,17 @@ class AuditWindow:
             cursor="hand2",
         ).pack(fill=X)
 
-        ttk.Label(
+        self.rail_note = ttk.Label(
             rail,
             text="Локальная обработка инвентаризации.\nСетевые запросы выполняются только\nк выбранным источникам уязвимостей.",
             style="Muted.TLabel",
             justify="left",
-        ).pack(side="bottom", anchor="w")
+        )
+        self.rail_note.pack(side="bottom", anchor="w")
 
         workspace = ttk.Frame(body, style="App.TFrame", padding=(22, 20, 24, 18))
         workspace.pack(side=RIGHT, fill=BOTH, expand=True)
+        self.workspace = workspace
 
         sources = ttk.Frame(workspace, style="Panel.TFrame", padding=(16, 14))
         sources.pack(fill=X, pady=(0, 12))
@@ -425,7 +541,8 @@ class AuditWindow:
         ttk.Label(sources, text=SOURCE_LABELS[0], style="Cisa.TLabel").pack(side=LEFT, padx=(18, 6))
         ttk.Label(sources, text=SOURCE_LABELS[1], style="Nvd.TLabel").pack(side=LEFT, padx=6)
         ttk.Label(sources, text=SOURCE_LABELS[2], style="Fstec.TLabel").pack(side=LEFT, padx=6)
-        ttk.Label(sources, textvariable=self.source_status, style="Muted.TLabel").pack(side=RIGHT)
+        self.source_status_label = ttk.Label(sources, textvariable=self.source_status, style="Muted.TLabel")
+        self.source_status_label.pack(side=RIGHT)
 
         mode_panel = ttk.Frame(workspace, style="Panel.TFrame", padding=(16, 13))
         mode_panel.pack(fill=X, pady=(0, 12))
@@ -457,7 +574,14 @@ class AuditWindow:
             style="Quiet.TButton",
             cursor="hand2",
         ).pack(side=RIGHT)
-        ttk.Label(output_panel, textvariable=self.output_dir, style="Path.TLabel", anchor="w").pack(fill=X)
+        self.path_label = ttk.Label(
+            output_panel,
+            textvariable=self.output_dir,
+            style="Path.TLabel",
+            anchor="w",
+            justify="left",
+        )
+        self.path_label.pack(fill=X)
 
         journal = ttk.Frame(workspace, style="Panel.TFrame", padding=(16, 14))
         journal.pack(fill=BOTH, expand=True)
@@ -473,7 +597,8 @@ class AuditWindow:
         ).pack(side=RIGHT)
         progress_panel = ttk.Frame(journal, style="Panel.TFrame")
         progress_panel.pack(fill=X, pady=(0, 10))
-        ttk.Label(progress_panel, textvariable=self.progress_status, style="Muted.TLabel").pack(
+        self.progress_status_label = ttk.Label(progress_panel, textvariable=self.progress_status, style="Muted.TLabel")
+        self.progress_status_label.pack(
             anchor="w", pady=(0, 4)
         )
         self.progress = ttk.Progressbar(
@@ -499,7 +624,35 @@ class AuditWindow:
             state="disabled",
         )
         self.log.pack(fill=BOTH, expand=True)
+        self._apply_responsive_layout(getattr(getattr(self, "window_bounds", None), "width", 1080))
+        if hasattr(self.root, "bind"):
+            self.root.bind("<Configure>", self._on_root_configure)
         self._log("Рабочая станция готова. Для полного сбора запустите приложение от администратора.")
+
+    def _on_root_configure(self, event: object) -> None:
+        width = int(getattr(event, "width", 0) or 0)
+        if width <= 0:
+            return
+        self._apply_responsive_layout(width)
+
+    def _configure_widget(self, attribute: str, **options: object) -> None:
+        widget = getattr(self, attribute, None)
+        if widget is not None:
+            widget.configure(**options)
+
+    def _apply_responsive_layout(self, width: int) -> None:
+        layout = responsive_layout_for_width(width)
+        self._configure_widget("header", padding=layout.header_padding)
+        self._configure_widget("footer", padding=layout.footer_padding)
+        self._configure_widget("rail", width=layout.rail_width, padding=layout.rail_padding)
+        self._configure_widget("workspace", padding=layout.workspace_padding)
+        self._configure_widget("path_label", wraplength=layout.path_wraplength)
+        self._configure_widget("source_status_label", wraplength=layout.status_wraplength, justify="right")
+        self._configure_widget("progress_status_label", wraplength=layout.path_wraplength, justify="left")
+        self._configure_widget("status_badge", wraplength=layout.status_wraplength)
+        self._configure_widget("footer_credit", wraplength=layout.path_wraplength)
+        self._configure_widget("rail_note", wraplength=layout.note_wraplength)
+        self._configure_widget("header_subtitle", wraplength=layout.header_wraplength)
 
     def _choose_output(self) -> None:
         selected = filedialog.askdirectory(initialdir=self.output_dir.get())
