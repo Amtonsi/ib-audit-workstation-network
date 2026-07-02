@@ -474,6 +474,7 @@ def build_pdf(output_path: str | Path) -> Path:
             "левая панель запускает полный аудит, пакетную HTML-проверку и обновление источников",
             "кнопка Отменить активна только во время операции и останавливает работу в безопасной точке",
             "панель источников показывает CISA KEV, NVD и ФСТЭК БДУ",
+            "кнопка Обновить базы сначала ищет vulnerability_sources.db в папке проекта и подпапках, затем докачивает только актуальные или отсутствующие источники",
             "режимы уязвимостей переключают полный онлайн-поиск или быстрый кэш NVD/CISA",
             "журнал выполнения показывает текущий этап, ошибки и прогресс",
             "нижняя подпись фиксирует автора приложения",
@@ -497,8 +498,110 @@ def build_pdf(output_path: str | Path) -> Path:
     )
     c.showPage()
 
-    # Page 4 - logic pipeline
-    section_header("3. Логика обработки данных", 4)
+    # Page 4 - usage instructions
+    section_header("Как пользоваться", 4)
+    instructions = [
+        (
+            "1. Запустить от администратора",
+            "Полностью распакуйте Windows-сборку. Нажмите правой кнопкой по "
+            "IBAuditWorkstation.exe и выберите «Запуск от имени администратора».",
+            light_teal,
+            teal,
+        ),
+        (
+            "2. Выбрать папку отчётов",
+            "Проверьте поле «Папка отчётов». Нажмите «Изменить», если HTML и "
+            "локальную историю нужно сохранять в другую папку.",
+            light_blue,
+            blue,
+        ),
+        (
+            "3. Обновить базы",
+            "Нажмите «Обновить базы». Программа найдёт существующую "
+            "vulnerability_sources.db и добавит только отсутствующие или "
+            "обновлённые данные.",
+            light_violet,
+            violet,
+        ),
+        (
+            "4. Выбрать режим",
+            "«Полный онлайн ФСТЭК» выполняет онлайн-поиск БДУ. Быстрый режим "
+            "использует локальные базы NVD и CISA без длительных запросов ФСТЭК.",
+            light_amber,
+            amber,
+        ),
+        (
+            "5. Запустить проверку",
+            "«Полный аудит компьютера» проверяет текущую систему. «Проверить "
+            "HTML-отчёты» позволяет выбрать несколько документов и получить "
+            "один сводный HTML.",
+            light_green,
+            green,
+        ),
+        (
+            "6. Следить или отменить",
+            "Текущий этап отображается в журнале выполнения. Кнопка «Отменить» "
+            "останавливает операцию в ближайшей безопасной точке.",
+            light_red,
+            red,
+        ),
+        (
+            "7. Открыть результат",
+            "После завершения нажмите «Открыть последний отчёт» либо «Открыть "
+            "папку отчётов». Сетевые источники и ошибки перечисляются в диагностике.",
+            light_blue,
+            blue,
+        ),
+        (
+            "8. Перейти к риску",
+            "В сводном HTML раскройте компьютер и полный инвентарь. Нажмите "
+            "компактную ссылку CVE/БДУ под объектом для перехода к точной "
+            "карточке риска.",
+            light_teal,
+            teal,
+        ),
+    ]
+    column_gap = 20
+    column_width = (page_width - margin * 2 - column_gap) / 2
+    card_height = 78
+    row_gap = 12
+    top_y = page_height - 92
+    for index, (title_text, body_text, fill, title_color) in enumerate(instructions):
+        column = index % 2
+        row = index // 2
+        card_x = margin + column * (column_width + column_gap)
+        card_y = top_y - card_height - row * (card_height + row_gap)
+        card(card_x, card_y, column_width, card_height, fill=fill)
+        set_font(12, bold=True, color=title_color)
+        c.drawString(card_x + 14, card_y + card_height - 22, title_text)
+        draw_wrapped(
+            body_text,
+            card_x + 14,
+            card_y + card_height - 42,
+            column_width - 28,
+            size=8.8,
+            leading=11.5,
+            color=ink,
+        )
+
+    note_y = 54
+    card(margin, note_y, page_width - margin * 2, 56, fill=light_amber)
+    set_font(11.5, bold=True, color=amber)
+    c.drawString(margin + 14, note_y + 34, "После обновления приложения")
+    draw_wrapped(
+        "Старые HTML-файлы не изменяются автоматически. Чтобы увидеть новые "
+        "элементы отчёта, запустите проверку исходных HTML-документов повторно.",
+        margin + 205,
+        note_y + 34,
+        page_width - margin * 2 - 220,
+        size=9.2,
+        leading=12,
+        color=ink,
+    )
+    c.showPage()
+
+    # Page 5 - logic pipeline
+    section_header("3. Логика обработки данных", 5)
     y = page_height - 128
     x = margin
     box_w = 108
@@ -550,8 +653,8 @@ def build_pdf(output_path: str | Path) -> Path:
     )
     c.showPage()
 
-    # Page 5 - vulnerability sources
-    section_header("4. Источники уязвимостей и режимы", 5)
+    # Page 6 - vulnerability sources
+    section_header("4. Источники уязвимостей и режимы", 6)
     x = margin
     y = page_height - 108
     set_font(15, bold=True)
@@ -602,8 +705,8 @@ def build_pdf(output_path: str | Path) -> Path:
         y -= 20
     c.showPage()
 
-    # Page 6 - batch HTML and cancellation
-    section_header("5. Проверка нескольких HTML-документов", 6)
+    # Page 7 - batch HTML and cancellation
+    section_header("5. Проверка нескольких HTML-документов", 7)
     x = margin + 18
     y = page_height - 124
     for idx, name in enumerate(["host-a.html", "host-b.html", "host-c.html"]):
@@ -651,8 +754,8 @@ def build_pdf(output_path: str | Path) -> Path:
     )
     c.showPage()
 
-    # Page 7 - report, privacy
-    section_header("6. Отчёт, приватность и публикация", 7)
+    # Page 8 - report, privacy
+    section_header("6. Отчёт, приватность и публикация", 8)
     x = margin
     y = page_height - 104
     set_font(16, bold=True)
@@ -690,8 +793,8 @@ def build_pdf(output_path: str | Path) -> Path:
     draw_link("GitHub Actions для проверки тестов", GITHUB_ACTIONS, x, y, size=11)
     c.showPage()
 
-    # Page 8 - commands and build
-    section_header("7. Команды сборки и проверки", 8)
+    # Page 9 - commands and build
+    section_header("7. Команды сборки и проверки", 9)
     x = margin
     y = page_height - 104
     set_font(16, bold=True)
@@ -701,7 +804,7 @@ def build_pdf(output_path: str | Path) -> Path:
         ("GUI", "python run_app.py"),
         ("CLI-аудит", "python run_audit.py --no-open"),
         ("Offline-аудит", "python run_audit.py --offline --no-open"),
-        ("Обновление NVD/CISA", "python scripts/update_vulnerability_database.py --output outputs\\vulnerability-database"),
+        ("Обновление БД", "python scripts/update_vulnerability_database.py --output outputs\\vulnerability-database\nищет существующую vulnerability_sources.db и обновляет её инкрементально"),
         ("Сборка EXE", "python -m PyInstaller build\\pyinstaller\\IBAuditWorkstation.spec --noconfirm --clean --distpath outputs\\dist --workpath build\\pyinstaller\\work-batch-html"),
         ("Сборка PDF", "python scripts\\build_user_guide_pdf.py --output docs\\IBAuditWorkstation_UserGuide_RU.pdf"),
         ("Тесты", "python -m unittest discover -s tests"),
