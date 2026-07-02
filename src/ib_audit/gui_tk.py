@@ -14,7 +14,7 @@ from .app import (
     analyze_reports,
     default_output_dir,
     run_audit,
-    update_vulnerability_sources,
+    update_vulnerability_database,
 )
 from .batch import BatchProgress
 from .cancellation import AuditCancelled, CancellationToken
@@ -90,6 +90,19 @@ def format_source_status(snapshots: list[SourceSnapshot]) -> str:
         display_date = ".".join(reversed(date)) if len(date) == 3 else item.fetched_at
         parts.append(f"{item.source}: {display_date}")
     return " · ".join(parts)
+
+
+def format_database_update_status(result: dict[str, object]) -> str:
+    db_path = Path(result["db_path"])
+    stats = result.get("stats", {})
+    if not isinstance(stats, dict):
+        stats = {}
+    return (
+        f"БД уязвимостей: {db_path.name} · "
+        f"источников={stats.get('source_files', 0)} · "
+        f"переиспользовано={stats.get('reused_sources', 0)} · "
+        f"обновлено={stats.get('updated_sources', 0)}"
+    )
 
 
 def _fstec_progress_value(message: str, current: int) -> int | None:
@@ -626,10 +639,12 @@ class AuditWindow:
 
     def _run_source_update(self) -> None:
         try:
-            result = update_vulnerability_sources(
-                Path(self.output_dir.get()) / "cache", progress=self.messages.put
+            result = update_vulnerability_database(
+                output_dir=Path(self.output_dir.get()) / "vulnerability-database",
+                project_root=Path.cwd(),
+                progress=self.messages.put,
             )
-            self.messages.put("__SOURCES__:" + format_source_status(result["snapshots"]))
+            self.messages.put("__SOURCES__:" + format_database_update_status(result))
             self.messages.put("__STATUS__:Базы обновлены")
         except Exception as exc:
             self.messages.put(f"Ошибка обновления баз: {exc}")

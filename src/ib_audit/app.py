@@ -23,6 +23,11 @@ from .report import HtmlReportBuilder
 from .vulnerabilities import VulnerabilityCorrelator
 from .vulnerabilities import VulnerabilitySourceClient
 from .source_cache import SnapshotCache
+from .vulnerability_database import (
+    VULNERABILITY_DB_NAME,
+    VulnerabilityDatabaseBuilder,
+    find_vulnerability_database,
+)
 
 
 VULNERABILITY_MODE_FULL = "full"
@@ -49,6 +54,30 @@ def update_vulnerability_sources(
         progress("Updating CISA KEV catalog")
     _records, diagnostics = source_client.fetch_cisa_kev()
     return {"snapshots": source_client.used_snapshots, "diagnostics": diagnostics}
+
+
+def update_vulnerability_database(
+    output_dir: str | Path | None = None,
+    project_root: str | Path | None = None,
+    start_year: int = 2002,
+    end_year: int | None = None,
+    include_delta: bool = True,
+    progress=None,
+    download_progress=None,
+) -> dict[str, object]:
+    output = Path(output_dir or default_output_dir() / "vulnerability-database")
+    root = Path(project_root or Path.cwd())
+    db_path = find_vulnerability_database(root) or output / VULNERABILITY_DB_NAME
+    snapshot_dir = db_path.parent / "snapshots"
+    builder = VulnerabilityDatabaseBuilder(snapshot_dir, db_path)
+    stats = builder.update_database(
+        start_year=start_year,
+        end_year=end_year,
+        include_delta=include_delta,
+        progress=progress,
+        download_progress=download_progress,
+    )
+    return {"db_path": db_path, "snapshot_dir": snapshot_dir, "stats": stats}
 
 
 def _create_vulnerability_correlator(

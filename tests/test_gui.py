@@ -363,6 +363,23 @@ class AuditWindowReportImportTests(unittest.TestCase):
         messages = list(window.messages.queue)
         self.assertIn("__STATUS__:cancelled:Проверка отменена", messages)
 
+    @patch("ib_audit.gui_tk.update_vulnerability_database")
+    def test_source_update_uses_sqlite_database_updater(self, update_database):
+        window = self._window()
+        update_database.return_value = {
+            "db_path": Path("C:/project/vulnerability-database/vulnerability_sources.db"),
+            "snapshot_dir": Path("C:/project/vulnerability-database/snapshots"),
+            "stats": {"reused_sources": 1, "updated_sources": 2, "source_files": 3},
+        }
+
+        window._run_source_update()
+
+        update_database.assert_called_once()
+        self.assertEqual(Path("C:/outputs/vulnerability-database"), update_database.call_args.kwargs["output_dir"])
+        messages = list(window.messages.queue)
+        self.assertTrue(any(message.startswith("__SOURCES__:") for message in messages))
+        self.assertIn("__STATUS__:Базы обновлены", messages)
+
 
 if __name__ == "__main__":
     unittest.main()
