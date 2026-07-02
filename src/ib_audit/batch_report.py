@@ -422,14 +422,6 @@ class BatchHtmlReportBuilder:
             f"onclick=\"return openComputerSection('{anchor}','risks')\">{label}</a>"
         )
 
-    @staticmethod
-    def _risk_results_by_object(item: BatchDocumentResult) -> dict[str, list]:
-        grouped: dict[str, list] = defaultdict(list)
-        for result in item.assessment.rule_results:
-            if result.status == "risk":
-                grouped[result.object_uid].append(result)
-        return grouped
-
     def _object_risk_links(self, document_anchor: str, results: list) -> str:
         if not results:
             return ""
@@ -555,7 +547,7 @@ table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{padding:9px;b
 .coverage-bar{height:12px;background:#e7edef;border-radius:999px;overflow:hidden;margin:14px 0}.coverage-bar span{display:block;height:100%;background:var(--teal);border-radius:999px}
 .document-section{padding:0;overflow:hidden}.document-section>details>summary{display:flex;justify-content:space-between;gap:15px;align-items:center;cursor:pointer;padding:17px 20px;background:#f8fafb}.document-section>details>summary::marker{color:var(--teal)}.document-section summary strong{font-size:18px}.document-section summary small{display:block;color:var(--muted);margin-top:3px}.summary-risk{color:var(--red);font-weight:700}.document-body{padding:4px 20px 20px}.document-tools{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.document-tools a{border:1px solid var(--line);border-radius:999px;padding:7px 10px;text-decoration:none;color:var(--teal);font-size:13px;font-weight:700}.document-tools a:hover{border-color:var(--teal);background:#ecfdf5}
 .host-findings{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:8px}.host-finding{border:1px solid var(--line);border-left:5px solid #64748b;border-radius:8px;padding:12px;min-width:0}.host-finding .severity{float:right}.category{border:1px solid var(--line);border-radius:8px;margin:8px 0}.category>summary{cursor:pointer;font-weight:700;padding:11px 13px;background:#f8fafb}.category>summary span{float:right;background:#e2e8f0;border-radius:999px;padding:2px 7px;font-size:11px}
-.object-card{margin:10px;border:1px solid #e5eaed;border-radius:8px;padding:12px}.object-risk-list{margin-top:10px;border-top:1px solid #e5eaed;padding-top:10px}.object-risk-list>strong{display:block;margin-bottom:7px;color:var(--red)}.object-risk-item{border:1px solid #fee2e2;border-left:4px solid var(--red);border-radius:8px;background:#fffafa;padding:9px;margin-top:7px}.object-risk-item .severity{margin-right:7px}.object-risk-item p{margin:6px 0 0}.item-value td:first-child{width:260px;font-weight:600}.empty{color:var(--muted);padding:8px 0}footer{color:var(--muted);font-size:12px;padding:5px 2px 24px}
+.object-card{margin:10px;border:1px solid #e5eaed;border-radius:8px;padding:12px}.object-risk-links{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:9px;border-top:1px solid #e5eaed;padding-top:9px;min-width:0}.object-risk-links>strong{color:var(--red);font-size:12px;margin-right:2px}.object-risk-link{display:inline-block;max-width:100%;border-radius:999px;padding:3px 8px;background:#e2e8f0;color:#475569;font-size:12px;font-weight:700;text-decoration:none;overflow-wrap:anywhere}.object-risk-link.critical{background:#fee2e2;color:#991b1b}.object-risk-link.high{background:#ffedd5;color:#9a3412}.object-risk-link.medium{background:#dbeafe;color:#1d4ed8}.object-risk-link:hover{outline:2px solid currentColor;outline-offset:1px}.host-finding.risk-target{outline:3px solid var(--teal);outline-offset:3px;background:#ecfdf5}.item-value td:first-child{width:260px;font-weight:600}.empty{color:var(--muted);padding:8px 0}footer{color:var(--muted);font-size:12px;padding:5px 2px 24px}
 @media(max-width:900px){aside{position:static;width:auto}.nav-title,aside a,.nav-empty{display:inline-block;margin:4px}.brand-subtitle{margin-bottom:8px}main{margin:0;padding:12px}.hero-head,.section-head{display:block}.batch-status{margin-top:8px}.search{min-width:0;width:100%;margin-top:10px}.comparison{font-size:12px}.item-value td:first-child{width:38%}}
 </style>"""
 
@@ -584,11 +576,34 @@ function openComputerSection(anchor,target){
   if(window.history&&window.history.replaceState){window.history.replaceState(null,'','#'+targetId);}
   return false;
 }
+function openComputerFinding(anchor,targetId){
+  var section=document.getElementById(anchor);
+  if(!section){return true;}
+  var details=section.querySelector('details');
+  if(details){details.open=true;}
+  var node=document.getElementById(targetId)||document.getElementById(anchor+'-risks')||section;
+  document.querySelectorAll('.host-finding.risk-target').forEach(function(item){
+    item.classList.remove('risk-target');
+  });
+  if(node.classList&&node.classList.contains('host-finding')){
+    node.classList.add('risk-target');
+    window.setTimeout(function(){node.classList.remove('risk-target');},2200);
+  }
+  node.scrollIntoView({behavior:'smooth',block:'center'});
+  if(window.history&&window.history.replaceState){
+    window.history.replaceState(null,'','#'+targetId);
+  }
+  return false;
+}
 function openSectionForHash(){
   var hash=(window.location.hash||'').replace(/^#/,'');
   if(!hash){return;}
-  var anchor=hash.replace(/-(risks|inventory|diagnostics)$/,'');
-  var section=document.getElementById(anchor);
+  var node=document.getElementById(hash);
+  var section=node&&node.closest?node.closest('.document-section'):null;
+  if(!section){
+    var anchor=hash.replace(/-(risks|inventory|diagnostics)$/,'');
+    section=document.getElementById(anchor);
+  }
   if(section&&section.classList.contains('document-section')){
     var details=section.querySelector('details');
     if(details){details.open=true;}

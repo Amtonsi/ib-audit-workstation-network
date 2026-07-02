@@ -243,6 +243,23 @@ class BatchHtmlReportBuilderTests(unittest.TestCase):
 
         self.assertNotIn("object-risk-links", object_card)
 
+    def test_exact_risk_navigation_opens_host_and_highlights_target(self):
+        rendered = BatchHtmlReportBuilder().render(
+            BatchAssessment.create(
+                [Path("PC-A.html")],
+                [make_result("PC-A", "critical")],
+                [],
+                "completed",
+            )
+        )
+
+        self.assertIn("function openComputerFinding(anchor,targetId)", rendered)
+        self.assertIn("node.classList.add('risk-target')", rendered)
+        self.assertIn("node.closest('.document-section')", rendered)
+        self.assertIn(".object-risk-links{display:flex", rendered)
+        self.assertIn("flex-wrap:wrap", rendered)
+        self.assertIn(".host-finding.risk-target", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()
