@@ -86,6 +86,37 @@ class AuditWindowReportImportTests(unittest.TestCase):
         self.assertLess(narrow.path_wraplength, desktop.path_wraplength)
         self.assertGreaterEqual(narrow.path_wraplength, 320)
 
+    def test_repeated_configure_event_same_width_does_not_reapply_layout(self):
+        window = AuditWindow.__new__(AuditWindow)
+        window._last_responsive_layout = None
+        window._configure_widget = Mock()
+        event = type("Event", (), {"width": 1080})()
+
+        window._on_root_configure(event)
+        first_count = window._configure_widget.call_count
+        window._on_root_configure(event)
+
+        self.assertGreater(first_count, 0)
+        self.assertEqual(first_count, window._configure_widget.call_count)
+
+    def test_reentrant_configure_event_during_layout_is_ignored(self):
+        window = AuditWindow.__new__(AuditWindow)
+        window._last_responsive_layout = None
+        reentered = False
+
+        def configure_widget(*args, **kwargs):
+            nonlocal reentered
+            if not reentered:
+                reentered = True
+                window._on_root_configure(type("Event", (), {"width": 1079})())
+
+        window._configure_widget = Mock(side_effect=configure_widget)
+
+        window._apply_responsive_layout(1080)
+
+        self.assertTrue(reentered)
+        self.assertEqual(11, window._configure_widget.call_count)
+
     def test_result_message_includes_risk_coverage_and_insufficient(self):
         message = format_result_message({
             "inventory_count": 200, "diagnostic_count": 4, "risk_count": 18,

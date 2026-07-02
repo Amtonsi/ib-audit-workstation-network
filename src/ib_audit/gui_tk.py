@@ -295,6 +295,8 @@ class AuditWindow:
         self.messages: queue.Queue[object] = queue.Queue()
         self.action_buttons: list[ttk.Button] = []
         self.active_cancel_token: CancellationToken | None = None
+        self._last_responsive_layout: ResponsiveLayout | None = None
+        self._applying_responsive_layout = False
         self._configure_styles()
         self._build()
         self.root.after(200, self._drain_messages)
@@ -641,18 +643,27 @@ class AuditWindow:
             widget.configure(**options)
 
     def _apply_responsive_layout(self, width: int) -> None:
+        if getattr(self, "_applying_responsive_layout", False):
+            return
         layout = responsive_layout_for_width(width)
-        self._configure_widget("header", padding=layout.header_padding)
-        self._configure_widget("footer", padding=layout.footer_padding)
-        self._configure_widget("rail", width=layout.rail_width, padding=layout.rail_padding)
-        self._configure_widget("workspace", padding=layout.workspace_padding)
-        self._configure_widget("path_label", wraplength=layout.path_wraplength)
-        self._configure_widget("source_status_label", wraplength=layout.status_wraplength, justify="right")
-        self._configure_widget("progress_status_label", wraplength=layout.path_wraplength, justify="left")
-        self._configure_widget("status_badge", wraplength=layout.status_wraplength)
-        self._configure_widget("footer_credit", wraplength=layout.path_wraplength)
-        self._configure_widget("rail_note", wraplength=layout.note_wraplength)
-        self._configure_widget("header_subtitle", wraplength=layout.header_wraplength)
+        if getattr(self, "_last_responsive_layout", None) == layout:
+            return
+        self._last_responsive_layout = layout
+        self._applying_responsive_layout = True
+        try:
+            self._configure_widget("header", padding=layout.header_padding)
+            self._configure_widget("footer", padding=layout.footer_padding)
+            self._configure_widget("rail", width=layout.rail_width, padding=layout.rail_padding)
+            self._configure_widget("workspace", padding=layout.workspace_padding)
+            self._configure_widget("path_label", wraplength=layout.path_wraplength)
+            self._configure_widget("source_status_label", wraplength=layout.status_wraplength, justify="right")
+            self._configure_widget("progress_status_label", wraplength=layout.path_wraplength, justify="left")
+            self._configure_widget("status_badge", wraplength=layout.status_wraplength)
+            self._configure_widget("footer_credit", wraplength=layout.path_wraplength)
+            self._configure_widget("rail_note", wraplength=layout.note_wraplength)
+            self._configure_widget("header_subtitle", wraplength=layout.header_wraplength)
+        finally:
+            self._applying_responsive_layout = False
 
     def _choose_output(self) -> None:
         selected = filedialog.askdirectory(initialdir=self.output_dir.get())
