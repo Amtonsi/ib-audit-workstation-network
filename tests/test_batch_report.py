@@ -23,7 +23,11 @@ from ib_audit.models import (
 )
 
 
-def make_result(hostname: str, severity: str = "high") -> BatchDocumentResult:
+def make_result(
+    hostname: str,
+    severity: str = "high",
+    references: list[str] | None = None,
+) -> BatchDocumentResult:
     run = AuditRun.create(hostname, False)
     obj = InventoryObject(
         "software",
@@ -46,6 +50,7 @@ def make_result(hostname: str, severity: str = "high") -> BatchDocumentResult:
         "Example Tool 1.0",
         "high",
         "Обновить Example Tool.",
+        references or [],
     )
     assessment = AssessmentBundle(
         WindowsProfile(
@@ -118,6 +123,28 @@ class BatchHtmlReportBuilderTests(unittest.TestCase):
         self.assertIn("&lt;bad&gt;.html", rendered)
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", rendered)
         self.assertNotIn("<script>alert(1)</script>", rendered)
+
+    def test_reference_links_wrap_inside_common_finding_cards(self):
+        long_reference = (
+            "https://msrc.microsoft.com/update-guide/vulnerability/"
+            "CVE-2024-0057-with-a-very-long-reference-path-that-must-not-overlap-neighbor-cards"
+        )
+        batch = BatchAssessment.create(
+            [Path("PC-A.html")],
+            [make_result("PC-A", "critical", references=[long_reference])],
+            [],
+            "completed",
+        )
+
+        rendered = BatchHtmlReportBuilder().render(batch)
+        reference_css = rendered.split(".reference-list", 1)[1].split(".coverage-bar", 1)[0]
+
+        self.assertIn(long_reference, rendered)
+        self.assertIn("class='reference-link'", rendered)
+        self.assertIn("display:flex", reference_css)
+        self.assertIn("max-width:100%", reference_css)
+        self.assertIn("overflow-wrap:anywhere", reference_css)
+        self.assertIn("word-break:break-word", reference_css)
 
 
 if __name__ == "__main__":
