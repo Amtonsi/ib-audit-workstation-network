@@ -255,6 +255,7 @@ class BatchHtmlReportBuilderTests(unittest.TestCase):
 
         self.assertIn("function openComputerFinding(anchor,targetId)", rendered)
         self.assertIn("node.classList.add('risk-target')", rendered)
+        self.assertIn("node.classList.remove('risk-target');},5000)", rendered)
         self.assertIn("node.closest('.document-section')", rendered)
         self.assertIn(".object-risk-links{display:flex", rendered)
         self.assertIn("flex-wrap:wrap", rendered)

@@ -587,7 +587,7 @@ function openComputerFinding(anchor,targetId){
   });
   if(node.classList&&node.classList.contains('host-finding')){
     node.classList.add('risk-target');
-    window.setTimeout(function(){node.classList.remove('risk-target');},2200);
+    window.setTimeout(function(){node.classList.remove('risk-target');},5000);
   }
   node.scrollIntoView({behavior:'smooth',block:'center'});
   if(window.history&&window.history.replaceState){
