@@ -255,9 +255,16 @@ class BatchHtmlReportBuilder:
             for result in item.assessment.rule_results
             if result.status == "risk"
         ]
-        risks_by_object = self._risk_results_by_object(item)
+        finding_entries = [
+            (result, self._finding_anchor(anchor, result.rule_id, index))
+            for index, result in enumerate(findings, 1)
+        ]
+        risks_by_object: dict[str, list] = defaultdict(list)
+        for result, target_id in finding_entries:
+            risks_by_object[result.object_uid].append((result, target_id))
         findings_html = "".join(
-            f"<article class='host-finding {html.escape(result.severity.casefold())}'>"
+            f"<article id='{target_id}' class='host-finding "
+            f"{html.escape(result.severity.casefold())}'>"
             f"<span class='severity {html.escape(result.severity.casefold())}'>"
             f"{html.escape(self._severity_label(result.severity))}</span>"
             f"<h4>{html.escape(result.rule_id)} · {html.escape(result.title)}</h4>"
@@ -265,7 +272,7 @@ class BatchHtmlReportBuilder:
             f"<p><strong>Рекомендация:</strong> {html.escape(result.remediation)}</p>"
             f"{self._reference_links(result.references)}"
             "</article>"
-            for result in findings
+            for result, target_id in finding_entries
         ) or "<p class='empty'>Подтверждённые риски не найдены.</p>"
         categories: dict[str, list] = defaultdict(list)
         for obj in item.inventory:
@@ -337,7 +344,10 @@ class BatchHtmlReportBuilder:
                 for key, value in obj.fields.items()
             )
             status = assessments.get(obj.uid, "not_applicable")
-            risk_details = self._object_risk_details(risks_by_object.get(obj.uid, []))
+            risk_links = self._object_risk_links(
+                self._document_anchor(document),
+                risks_by_object.get(obj.uid, []),
+            )
             cards.append(
                 f"<article class='object-card' data-status='{html.escape(status)}'>"
                 f"<div class='object-head'><h4>{html.escape(obj.title)}</h4>"
@@ -347,7 +357,7 @@ class BatchHtmlReportBuilder:
                 f"Уверенность: {html.escape(obj.confidence)}</p>"
                 "<table class='item-value'><thead><tr><th>Параметр</th>"
                 f"<th>Значение</th></tr></thead><tbody>{rows}</tbody></table>"
-                f"{risk_details}</article>"
+                f"{risk_links}</article>"
             )
         return (
             f"<details class='category'><summary>{html.escape(category)}"
@@ -385,6 +395,14 @@ class BatchHtmlReportBuilder:
             char if char.isalnum() else "-" for char in item.run.id.casefold()
         )
 
+    @staticmethod
+    def _finding_anchor(document_anchor: str, rule_id: str, index: int) -> str:
+        slug = "".join(
+            char if char.isalnum() else "-"
+            for char in str(rule_id).casefold()
+        ).strip("-")
+        return f"{document_anchor}-finding-{slug or 'risk'}-{index}"
+
     @classmethod
     def _computer_link(cls, item: BatchDocumentResult, label_html: str, class_name: str = "") -> str:
         anchor = cls._document_anchor(item)
@@ -412,31 +430,31 @@ class BatchHtmlReportBuilder:
                 grouped[result.object_uid].append(result)
         return grouped
 
-    def _object_risk_details(self, results: list) -> str:
+    def _object_risk_links(self, document_anchor: str, results: list) -> str:
         if not results:
             return ""
-        items = []
-        for result in sorted(
+        links = []
+        for result, target_id in sorted(
             results,
             key=lambda item: (
-                SEVERITY_ORDER.get(str(item.severity).casefold(), SEVERITY_ORDER["info"]),
-                str(item.rule_id).casefold(),
+                SEVERITY_ORDER.get(
+                    str(item[0].severity).casefold(),
+                    SEVERITY_ORDER["info"],
+                ),
+                str(item[0].rule_id).casefold(),
+                item[1],
             ),
         ):
             severity = str(result.severity).casefold()
-            items.append(
-                f"<div class='object-risk-item {html.escape(severity)}'>"
-                f"<span class='severity {html.escape(severity)}'>{html.escape(self._severity_label(result.severity))}</span>"
-                f"<strong>{html.escape(result.rule_id)} · {html.escape(result.title)}</strong>"
-                f"<p>{html.escape(result.evidence)}</p>"
-                f"<p><strong>Рекомендация:</strong> {html.escape(result.remediation)}</p>"
-                f"{self._reference_links(result.references)}"
-                "</div>"
+            links.append(
+                f"<a class='object-risk-link {html.escape(severity)}' "
+                f"href='#{html.escape(target_id, quote=True)}' "
+                f"onclick=\"return openComputerFinding('{document_anchor}',"
+                f"'{target_id}')\">{html.escape(result.rule_id)}</a>"
             )
         return (
-            "<div class='object-risk-list'>"
-            "<strong>Выявленные риски объекта</strong>"
-            + "".join(items)
+            "<div class='object-risk-links'><strong>Риски:</strong>"
+            + "".join(links)
             + "</div>"
         )
 

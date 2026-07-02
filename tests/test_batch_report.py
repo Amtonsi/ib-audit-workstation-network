@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -162,20 +163,85 @@ class BatchHtmlReportBuilderTests(unittest.TestCase):
         self.assertIn("window.addEventListener('hashchange', openSectionForHash)", rendered)
         self.assertNotIn("<details open>", rendered)
 
-    def test_inventory_object_with_risk_shows_specific_risk_below_fields(self):
+    def test_inventory_object_risk_is_a_compact_link_to_exact_finding(self):
+        result = make_result("PC-A", "critical")
         batch = BatchAssessment.create(
             [Path("PC-A.html")],
-            [make_result("PC-A", "critical")],
+            [result],
+            [],
+            "completed",
+        )
+        anchor = BatchHtmlReportBuilder._document_anchor(result)
+
+        rendered = BatchHtmlReportBuilder().render(batch)
+        object_card = rendered.split("class='object-card'", 1)[1].split("</article>", 1)[0]
+
+        self.assertIn("class='object-risk-links'", object_card)
+        self.assertIn("CVE-2099-0001", object_card)
+        self.assertIn(f"href='#{anchor}-finding-cve-2099-0001-1'", object_card)
+        self.assertIn(
+            f"onclick=\"return openComputerFinding('{anchor}',"
+            f"'{anchor}-finding-cve-2099-0001-1')\"",
+            object_card,
+        )
+        self.assertNotIn("Example Tool 1.0", object_card)
+        self.assertIn(
+            f"id='{anchor}-finding-cve-2099-0001-1' class='host-finding critical'",
+            rendered,
+        )
+
+    def test_duplicate_rule_ids_receive_unique_finding_targets(self):
+        result = make_result("PC-A", "critical")
+        original = result.assessment.rule_results[0]
+        result.assessment.rule_results.append(
+            RuleResult(
+                original.object_uid,
+                original.rule_id,
+                original.rule_version,
+                original.kind,
+                original.status,
+                original.severity,
+                "Вторая уязвимость",
+                original.actual,
+                original.expected,
+                "Второе подтверждение",
+                original.confidence,
+                original.remediation,
+                original.references,
+            )
+        )
+        batch = BatchAssessment.create(
+            [Path("PC-A.html")],
+            [result],
             [],
             "completed",
         )
 
         rendered = BatchHtmlReportBuilder().render(batch)
-        object_risk_section = rendered.split("class='object-risk-list'", 1)[1].split("</article>", 1)[0]
+        targets = re.findall(
+            r"id='([^']+-finding-cve-2099-0001-\d+)' class='host-finding",
+            rendered,
+        )
 
-        self.assertIn("CVE-2099-0001", object_risk_section)
-        self.assertIn("Example Tool 1.0", object_risk_section)
-        self.assertIn("critical", object_risk_section)
+        self.assertEqual(2, len(targets))
+        self.assertEqual(2, len(set(targets)))
+        for target in targets:
+            self.assertIn(f"href='#{target}'", rendered)
+
+    def test_inventory_object_without_risk_has_no_risk_link_row(self):
+        result = make_result("PC-A")
+        result.assessment.rule_results.clear()
+        batch = BatchAssessment.create(
+            [Path("PC-A.html")],
+            [result],
+            [],
+            "completed",
+        )
+
+        rendered = BatchHtmlReportBuilder().render(batch)
+        object_card = rendered.split("class='object-card'", 1)[1].split("</article>", 1)[0]
+
+        self.assertNotIn("object-risk-links", object_card)
 
 
 if __name__ == "__main__":
