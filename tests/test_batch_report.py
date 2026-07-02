@@ -146,6 +146,37 @@ class BatchHtmlReportBuilderTests(unittest.TestCase):
         self.assertIn("overflow-wrap:anywhere", reference_css)
         self.assertIn("word-break:break-word", reference_css)
 
+    def test_host_navigation_opens_document_and_links_risks_to_inventory(self):
+        result = make_result("INTEGRA-2", "critical")
+        batch = BatchAssessment.create([Path("INTEGRA-2.html")], [result], [], "completed")
+        anchor = BatchHtmlReportBuilder._document_anchor(result)
+
+        rendered = BatchHtmlReportBuilder().render(batch)
+
+        self.assertIn(f"href='#{anchor}-risks'", rendered)
+        self.assertIn(f"onclick=\"return openComputerSection('{anchor}','risks')\"", rendered)
+        self.assertIn(f"id='{anchor}-risks'", rendered)
+        self.assertIn(f"id='{anchor}-inventory'", rendered)
+        self.assertIn(f"onclick=\"return openComputerSection('{anchor}','inventory')\"", rendered)
+        self.assertIn("function openComputerSection", rendered)
+        self.assertIn("window.addEventListener('hashchange', openSectionForHash)", rendered)
+        self.assertNotIn("<details open>", rendered)
+
+    def test_inventory_object_with_risk_shows_specific_risk_below_fields(self):
+        batch = BatchAssessment.create(
+            [Path("PC-A.html")],
+            [make_result("PC-A", "critical")],
+            [],
+            "completed",
+        )
+
+        rendered = BatchHtmlReportBuilder().render(batch)
+        object_risk_section = rendered.split("class='object-risk-list'", 1)[1].split("</article>", 1)[0]
+
+        self.assertIn("CVE-2099-0001", object_risk_section)
+        self.assertIn("Example Tool 1.0", object_risk_section)
+        self.assertIn("critical", object_risk_section)
+
 
 if __name__ == "__main__":
     unittest.main()

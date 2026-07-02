@@ -63,7 +63,7 @@ class BatchHtmlReportBuilder:
             for anchor, label in links
         )
         hosts = "".join(
-            f"<a href='#{self._document_anchor(item)}'>{html.escape(item.run.hostname)}</a>"
+            f"{self._computer_link(item, html.escape(item.run.hostname), 'nav-host')}"
             for item in self._ranked_documents(batch)
         )
         return (
@@ -127,9 +127,11 @@ class BatchHtmlReportBuilder:
                 else "ok"
             )
             status = "Риск" if coverage.risk else "Проверен"
+            anchor = self._document_anchor(item)
             rows.append(
                 "<tr>"
-                f"<td><a class='host-link' href='#{self._document_anchor(item)}'>"
+                f"<td><a class='host-link' href='#{anchor}-risks' "
+                f"onclick=\"return openComputerSection('{anchor}','risks')\">"
                 f"{html.escape(item.run.hostname)}</a>"
                 f"<div class='cell-meta'>{html.escape(item.source_path.name)}</div></td>"
                 f"<td><span class='count critical'>{counts['critical']}</span></td>"
@@ -160,9 +162,13 @@ class BatchHtmlReportBuilder:
 
     def _common_findings(self, batch: BatchAssessment) -> str:
         cards = []
+        anchors_by_host = {
+            item.run.hostname: self._document_anchor(item)
+            for item in batch.completed
+        }
         for finding in batch.common_findings:
             hosts = "".join(
-                f"<span class='host-pill'>{html.escape(host)}</span>"
+                self._host_pill(host, anchors_by_host.get(host))
                 for host in finding.hostnames
             )
             cards.append(
@@ -249,6 +255,7 @@ class BatchHtmlReportBuilder:
             for result in item.assessment.rule_results
             if result.status == "risk"
         ]
+        risks_by_object = self._risk_results_by_object(item)
         findings_html = "".join(
             f"<article class='host-finding {html.escape(result.severity.casefold())}'>"
             f"<span class='severity {html.escape(result.severity.casefold())}'>"
@@ -269,7 +276,7 @@ class BatchHtmlReportBuilder:
             *sorted(name for name in categories if name not in set(known)),
         ]
         inventory_html = "".join(
-            self._inventory_category(item, category, categories[category])
+            self._inventory_category(item, category, categories[category], risks_by_object)
             for category in ordered
         )
         diagnostics = "".join(
@@ -284,24 +291,29 @@ class BatchHtmlReportBuilder:
         return (
             f"<section id='{anchor}' class='document-section' "
             f"data-host='{html.escape(item.run.hostname, quote=True)}'>"
-            "<details open><summary>"
+            "<details><summary>"
             f"<span><strong>{html.escape(item.run.hostname)}</strong>"
             f"<small>{html.escape(item.source_path.name)} · {len(item.inventory)} объектов</small></span>"
             f"<span class='summary-risk'>{coverage.risk} рисков · {coverage.document_percent}%</span>"
             "</summary><div class='document-body'>"
             f"<p class='meta'>Формат: {html.escape(item.source_format)} · "
             f"Исходный файл: {html.escape(str(item.source_path.resolve(strict=False)))}</p>"
+            "<nav class='document-tools'>"
+            f"<a href='#{anchor}-risks' onclick=\"return openComputerSection('{anchor}','risks')\">К рискам</a>"
+            f"<a href='#{anchor}-inventory' onclick=\"return openComputerSection('{anchor}','inventory')\">К полному инвентарю</a>"
+            "<a href='#common-findings'>Вернуться к общим рискам</a>"
+            "</nav>"
             "<div class='kpis compact'>"
             f"{self._kpi(str(coverage.risk), 'риски', 'critical')}"
             f"{self._kpi(str(coverage.passed), 'проверено', 'ok')}"
             f"{self._kpi(str(coverage.insufficient_data), 'недостаточно данных', 'warning')}"
             f"{self._kpi(str(coverage.document_percent) + '%', 'покрытие')}"
             "</div>"
-            "<h3>Риски и рекомендации</h3>"
+            f"<h3 id='{anchor}-risks'>Риски и рекомендации</h3>"
             f"<div class='host-findings'>{findings_html}</div>"
-            "<h3>Полный инвентарь</h3>"
+            f"<h3 id='{anchor}-inventory'>Полный инвентарь</h3>"
             f"{inventory_html or '<p class=\"empty\">Инвентарь отсутствует.</p>'}"
-            "<h3>Диагностика</h3>"
+            f"<h3 id='{anchor}-diagnostics'>Диагностика</h3>"
             "<table><thead><tr><th>Модуль</th><th>Уровень</th>"
             f"<th>Сообщение</th><th>Источник</th></tr></thead><tbody>{diagnostics}</tbody></table>"
             "</div></details></section>"
@@ -312,6 +324,7 @@ class BatchHtmlReportBuilder:
         document: BatchDocumentResult,
         category: str,
         objects: list,
+        risks_by_object: dict[str, list],
     ) -> str:
         assessments = {
             item.object_uid: item.status for item in document.assessment.assessments
@@ -324,6 +337,7 @@ class BatchHtmlReportBuilder:
                 for key, value in obj.fields.items()
             )
             status = assessments.get(obj.uid, "not_applicable")
+            risk_details = self._object_risk_details(risks_by_object.get(obj.uid, []))
             cards.append(
                 f"<article class='object-card' data-status='{html.escape(status)}'>"
                 f"<div class='object-head'><h4>{html.escape(obj.title)}</h4>"
@@ -332,7 +346,8 @@ class BatchHtmlReportBuilder:
                 f"<p class='cell-meta'>Источник: {html.escape(obj.source)} · "
                 f"Уверенность: {html.escape(obj.confidence)}</p>"
                 "<table class='item-value'><thead><tr><th>Параметр</th>"
-                f"<th>Значение</th></tr></thead><tbody>{rows}</tbody></table></article>"
+                f"<th>Значение</th></tr></thead><tbody>{rows}</tbody></table>"
+                f"{risk_details}</article>"
             )
         return (
             f"<details class='category'><summary>{html.escape(category)}"
@@ -368,6 +383,61 @@ class BatchHtmlReportBuilder:
     def _document_anchor(item: BatchDocumentResult) -> str:
         return "computer-" + "".join(
             char if char.isalnum() else "-" for char in item.run.id.casefold()
+        )
+
+    @classmethod
+    def _computer_link(cls, item: BatchDocumentResult, label_html: str, class_name: str = "") -> str:
+        anchor = cls._document_anchor(item)
+        class_attr = f" class='{html.escape(class_name)}'" if class_name else ""
+        return (
+            f"<a{class_attr} href='#{anchor}-risks' "
+            f"onclick=\"return openComputerSection('{anchor}','risks')\">{label_html}</a>"
+        )
+
+    @staticmethod
+    def _host_pill(hostname: str, anchor: str | None) -> str:
+        label = html.escape(hostname)
+        if not anchor:
+            return f"<span class='host-pill'>{label}</span>"
+        return (
+            f"<a class='host-pill' href='#{anchor}-risks' "
+            f"onclick=\"return openComputerSection('{anchor}','risks')\">{label}</a>"
+        )
+
+    @staticmethod
+    def _risk_results_by_object(item: BatchDocumentResult) -> dict[str, list]:
+        grouped: dict[str, list] = defaultdict(list)
+        for result in item.assessment.rule_results:
+            if result.status == "risk":
+                grouped[result.object_uid].append(result)
+        return grouped
+
+    def _object_risk_details(self, results: list) -> str:
+        if not results:
+            return ""
+        items = []
+        for result in sorted(
+            results,
+            key=lambda item: (
+                SEVERITY_ORDER.get(str(item.severity).casefold(), SEVERITY_ORDER["info"]),
+                str(item.rule_id).casefold(),
+            ),
+        ):
+            severity = str(result.severity).casefold()
+            items.append(
+                f"<div class='object-risk-item {html.escape(severity)}'>"
+                f"<span class='severity {html.escape(severity)}'>{html.escape(self._severity_label(result.severity))}</span>"
+                f"<strong>{html.escape(result.rule_id)} · {html.escape(result.title)}</strong>"
+                f"<p>{html.escape(result.evidence)}</p>"
+                f"<p><strong>Рекомендация:</strong> {html.escape(result.remediation)}</p>"
+                f"{self._reference_links(result.references)}"
+                "</div>"
+            )
+        return (
+            "<div class='object-risk-list'>"
+            "<strong>Выявленные риски объекта</strong>"
+            + "".join(items)
+            + "</div>"
         )
 
     @staticmethod
@@ -457,7 +527,7 @@ h1{font-size:30px;margin:2px 0 4px}h2{margin:2px 0 15px}h3{margin:20px 0 10px}h4
 .banner{padding:12px 14px;border-radius:9px;margin:14px 0}.banner.cancelled{background:#fff7ed;border:1px solid #fdba74;color:#9a3412}.banner.warning{background:#fffbeb;border:1px solid #fcd34d;color:#92400e}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px}.kpis.compact{grid-template-columns:repeat(auto-fit,minmax(125px,1fr))}
 .kpi{background:#f8fafb;border:1px solid #e4e9ec;border-radius:9px;padding:13px}.kpi strong{display:block;font-size:25px}.kpi span{color:var(--muted);font-size:12px}.kpi.critical strong{color:var(--red)}.kpi.high strong,.kpi.warning strong{color:var(--amber)}.kpi.ok strong{color:var(--green)}
-.pills{display:flex;flex-wrap:wrap;gap:6px}.pill,.host-pill{background:#eef2ff;color:#3730a3;border-radius:999px;padding:4px 8px;font-size:12px}.pill.warning{background:#fff7ed;color:#9a3412}
+.pills{display:flex;flex-wrap:wrap;gap:6px}.pill,.host-pill{display:inline-block;background:#eef2ff;color:#3730a3;border-radius:999px;padding:4px 8px;font-size:12px;text-decoration:none}.pill.warning{background:#fff7ed;color:#9a3412}
 table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{padding:9px;border-bottom:1px solid #e5eaed;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{color:#53636b;font-size:12px;background:#f8fafb}.comparison th:first-child,.comparison td:first-child{width:31%}
 .host-link{color:var(--teal);font-weight:700;text-decoration:none}.count{font-weight:800}.count.critical{color:var(--red)}.count.high{color:var(--amber)}.search{border:1px solid var(--line);border-radius:8px;padding:9px 11px;min-width:220px}
 .filter-row{display:flex;gap:6px;flex-wrap:wrap}.filter-row button{border:1px solid var(--line);background:#fff;padding:7px 10px;border-radius:7px;cursor:pointer}.filter-row button:hover{border-color:var(--teal);color:var(--teal)}
@@ -465,9 +535,9 @@ table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{padding:9px;b
 .finding-head{align-items:center;justify-content:flex-start}.affected{margin-left:auto;color:var(--muted);font-size:12px}.severity{background:#e2e8f0;color:#475569}.severity.critical{background:#fee2e2;color:#991b1b}.severity.high{background:#ffedd5;color:#9a3412}.severity.medium{background:#dbeafe;color:#1d4ed8}.host-list{display:flex;gap:5px;flex-wrap:wrap}
 .reference-list{margin:8px 0;display:flex;flex-direction:column;gap:6px;min-width:0}.reference-link{display:block;max-width:100%;min-width:0;color:#1d4ed8;overflow-wrap:anywhere;word-break:break-word;white-space:normal;line-height:1.35}.reference-link span{display:inline-block;background:#fee2e2;color:#991b1b;border-radius:999px;padding:2px 6px;margin-right:4px;font-size:11px;font-weight:700}
 .coverage-bar{height:12px;background:#e7edef;border-radius:999px;overflow:hidden;margin:14px 0}.coverage-bar span{display:block;height:100%;background:var(--teal);border-radius:999px}
-.document-section{padding:0;overflow:hidden}.document-section>details>summary{display:flex;justify-content:space-between;gap:15px;align-items:center;cursor:pointer;padding:17px 20px;background:#f8fafb}.document-section>details>summary::marker{color:var(--teal)}.document-section summary strong{font-size:18px}.document-section summary small{display:block;color:var(--muted);margin-top:3px}.summary-risk{color:var(--red);font-weight:700}.document-body{padding:4px 20px 20px}
-.host-findings{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:8px}.host-finding{border:1px solid var(--line);border-left:5px solid #64748b;border-radius:8px;padding:12px}.host-finding .severity{float:right}.category{border:1px solid var(--line);border-radius:8px;margin:8px 0}.category>summary{cursor:pointer;font-weight:700;padding:11px 13px;background:#f8fafb}.category>summary span{float:right;background:#e2e8f0;border-radius:999px;padding:2px 7px;font-size:11px}
-.object-card{margin:10px;border:1px solid #e5eaed;border-radius:8px;padding:12px}.item-value td:first-child{width:260px;font-weight:600}.empty{color:var(--muted);padding:8px 0}footer{color:var(--muted);font-size:12px;padding:5px 2px 24px}
+.document-section{padding:0;overflow:hidden}.document-section>details>summary{display:flex;justify-content:space-between;gap:15px;align-items:center;cursor:pointer;padding:17px 20px;background:#f8fafb}.document-section>details>summary::marker{color:var(--teal)}.document-section summary strong{font-size:18px}.document-section summary small{display:block;color:var(--muted);margin-top:3px}.summary-risk{color:var(--red);font-weight:700}.document-body{padding:4px 20px 20px}.document-tools{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.document-tools a{border:1px solid var(--line);border-radius:999px;padding:7px 10px;text-decoration:none;color:var(--teal);font-size:13px;font-weight:700}.document-tools a:hover{border-color:var(--teal);background:#ecfdf5}
+.host-findings{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:8px}.host-finding{border:1px solid var(--line);border-left:5px solid #64748b;border-radius:8px;padding:12px;min-width:0}.host-finding .severity{float:right}.category{border:1px solid var(--line);border-radius:8px;margin:8px 0}.category>summary{cursor:pointer;font-weight:700;padding:11px 13px;background:#f8fafb}.category>summary span{float:right;background:#e2e8f0;border-radius:999px;padding:2px 7px;font-size:11px}
+.object-card{margin:10px;border:1px solid #e5eaed;border-radius:8px;padding:12px}.object-risk-list{margin-top:10px;border-top:1px solid #e5eaed;padding-top:10px}.object-risk-list>strong{display:block;margin-bottom:7px;color:var(--red)}.object-risk-item{border:1px solid #fee2e2;border-left:4px solid var(--red);border-radius:8px;background:#fffafa;padding:9px;margin-top:7px}.object-risk-item .severity{margin-right:7px}.object-risk-item p{margin:6px 0 0}.item-value td:first-child{width:260px;font-weight:600}.empty{color:var(--muted);padding:8px 0}footer{color:var(--muted);font-size:12px;padding:5px 2px 24px}
 @media(max-width:900px){aside{position:static;width:auto}.nav-title,aside a,.nav-empty{display:inline-block;margin:4px}.brand-subtitle{margin-bottom:8px}main{margin:0;padding:12px}.hero-head,.section-head{display:block}.batch-status{margin-top:8px}.search{min-width:0;width:100%;margin-top:10px}.comparison{font-size:12px}.item-value td:first-child{width:38%}}
 </style>"""
 
@@ -485,6 +555,29 @@ function filterCommon(severity){
     card.style.display=(severity==='all'||card.dataset.severity===severity)?'block':'none';
   });
 }
+function openComputerSection(anchor,target){
+  var section=document.getElementById(anchor);
+  if(!section){return true;}
+  var details=section.querySelector('details');
+  if(details){details.open=true;}
+  var targetId=target?anchor+'-'+target:anchor;
+  var node=document.getElementById(targetId)||section;
+  node.scrollIntoView({behavior:'smooth',block:'start'});
+  if(window.history&&window.history.replaceState){window.history.replaceState(null,'','#'+targetId);}
+  return false;
+}
+function openSectionForHash(){
+  var hash=(window.location.hash||'').replace(/^#/,'');
+  if(!hash){return;}
+  var anchor=hash.replace(/-(risks|inventory|diagnostics)$/,'');
+  var section=document.getElementById(anchor);
+  if(section&&section.classList.contains('document-section')){
+    var details=section.querySelector('details');
+    if(details){details.open=true;}
+  }
+}
+window.addEventListener('hashchange', openSectionForHash);
+window.addEventListener('DOMContentLoaded', openSectionForHash);
 </script>"""
 
 
