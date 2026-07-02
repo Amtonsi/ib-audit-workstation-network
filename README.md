@@ -78,6 +78,10 @@
 - [NVD Vulnerabilities API](https://nvd.nist.gov/developers/vulnerabilities)
 - [ФСТЭК БДУ](https://bdu.fstec.ru/vul)
 
+Локальная `vulnerability_sources.db` хранит не только исходные CVE/KEV-записи, но и производные индексы NVD CPE: `a` для приложений, `o` для ОС/firmware и `h` для аппаратной части. Это позволяет проверять ПО, драйверы, BIOS, устройства, сетевые адаптеры, диски, процессоры и другие versioned-объекты без повторных запросов к NVD. Для быстрых проверок используется FTS-индекс affected-products; при прерванной индексации база пересобирает производные таблицы при следующем обновлении.
+
+HTML-отчёты показывают ссылки на источники CVE и отдельно помечают exploit-подобные ссылки бейджем `Эксплойт` для NVD reference URL вроде Exploit-DB, Metasploit, Packet Storm и SecurityFocus BID.
+
 ## Приватность и безопасная публикация
 
 ![Граница приватности](docs/images/privacy-boundary.svg)

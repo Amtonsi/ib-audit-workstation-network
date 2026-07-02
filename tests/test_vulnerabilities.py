@@ -1,4 +1,7 @@
 import os
+import gzip
+import json
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -10,7 +13,12 @@ sys.path.insert(0, os.path.abspath("src"))
 from ib_audit.cancellation import AuditCancelled, CancellationToken
 from ib_audit.models import CollectorDiagnostic, InventoryObject, VulnerabilityMatch
 from ib_audit.source_cache import SnapshotCache
-from ib_audit.vulnerabilities import VulnerabilityCorrelator, VulnerabilitySourceClient
+from ib_audit.vulnerabilities import (
+    VulnerabilityCorrelator,
+    VulnerabilityDatabaseSourceClient,
+    VulnerabilitySourceClient,
+)
+from ib_audit.vulnerability_database import DownloadedSource, VulnerabilityDatabaseBuilder
 
 
 class VulnerabilityCorrelatorTests(unittest.TestCase):
@@ -59,6 +67,96 @@ class VulnerabilityCorrelatorTests(unittest.TestCase):
             "descriptions": [{"lang": "en", "value": "Example Driver before 2.0 is vulnerable."}],
         }
         self.assertEqual([], VulnerabilityCorrelator().match_inventory([driver], [], [record]))
+
+    def test_nested_nvd_cpe_configuration_matches_hardware(self):
+        bios = InventoryObject(
+            "bios", "BIOS Version", "bios", "Example BIOS",
+            {"Manufacturer": "Example", "BIOS Version": "1.5"}, "fixture",
+        )
+        record = {
+            "id": "CVE-2099-7010",
+            "configurations": [{"nodes": [{
+                "operator": "OR",
+                "children": [{"cpeMatch": [{
+                    "vulnerable": True,
+                    "criteria": "cpe:2.3:h:example:example_bios:*:*:*:*:*:*:*:*",
+                    "versionEndExcluding": "2.0",
+                }]}],
+            }]}],
+            "descriptions": [{"lang": "en", "value": "Example BIOS before 2.0 is vulnerable."}],
+        }
+
+        matches = VulnerabilityCorrelator().match_inventory([bios], [], [record])
+
+        self.assertEqual("CVE-2099-7010", matches[0].cve)
+        self.assertEqual(bios.uid, matches[0].object_uid)
+
+    def test_exact_cpe_version_rejects_different_installed_version(self):
+        software = InventoryObject(
+            "s", "Installed Software", "software", "Widget Tool",
+            {"Vendor": "WidgetCo", "Version": "2.0"}, "fixture",
+        )
+        record = {
+            "id": "CVE-2099-7020",
+            "configurations": [{"nodes": [{"cpeMatch": [{
+                "vulnerable": True,
+                "criteria": "cpe:2.3:a:widgetco:widget_tool:1.0:*:*:*:*:*:*:*",
+            }]}]}],
+            "descriptions": [{"lang": "en", "value": "Widget Tool 1.0 is vulnerable."}],
+        }
+
+        self.assertEqual([], VulnerabilityCorrelator().match_inventory([software], [], [record]))
+
+    def test_nvd_configuration_match_requires_installed_version(self):
+        service = InventoryObject(
+            "svc", "Services", "service", "Google Chrome Elevation Service",
+            {"Name": "GoogleChromeElevationService", "CompanyName": "Google"}, "fixture",
+        )
+        record = {
+            "id": "CVE-2099-7030",
+            "configurations": [{"nodes": [{"cpeMatch": [{
+                "vulnerable": True,
+                "criteria": "cpe:2.3:a:google:chrome:*:*:*:*:*:*:*:*",
+                "versionEndExcluding": "120.0",
+            }]}]}],
+            "descriptions": [{"lang": "en", "value": "Google Chrome before 120 is vulnerable."}],
+        }
+
+        self.assertEqual([], VulnerabilityCorrelator().match_inventory([service], [], [record]))
+
+    def test_database_records_do_not_fall_back_to_description_when_cpe_misses(self):
+        software = InventoryObject(
+            "s", "Installed Software", "software", "Widget Tool",
+            {"Vendor": "WidgetCo", "Version": "2.0"}, "fixture",
+        )
+        record = {
+            "id": "CVE-2099-7040",
+            "_ib_match_requires_configuration": True,
+            "configurations": [{"nodes": [{"cpeMatch": [{
+                "vulnerable": True,
+                "criteria": "cpe:2.3:a:other_vendor:other_tool:*:*:*:*:*:*:*:*",
+            }]}]}],
+            "descriptions": [{"lang": "en", "value": "Widget Tool 2.0 is mentioned in this text."}],
+        }
+
+        self.assertEqual([], VulnerabilityCorrelator().match_inventory([software], [], [record]))
+
+    def test_generic_legacy_windows_cpe_does_not_match_modern_windows(self):
+        os_item = InventoryObject(
+            "os", "Operating System", "operating_system", "Microsoft Windows 11 Pro",
+            {"Manufacturer": "Microsoft Corporation", "Version": "10.0.26200"}, "fixture",
+        )
+        record = {
+            "id": "CVE-1999-0511",
+            "configurations": [{"nodes": [{"cpeMatch": [{
+                "vulnerable": True,
+                "criteria": "cpe:2.3:o:microsoft:windows_nt:*:*:*:*:*:*:*:*",
+            }]}]}],
+            "descriptions": [{"lang": "en", "value": "Legacy Windows NT vulnerability."}],
+        }
+
+        self.assertEqual([], VulnerabilityCorrelator().match_inventory([os_item], [], [record]))
+
     def test_source_client_uses_cached_kev_offline(self):
         with tempfile.TemporaryDirectory() as temp:
             cache = SnapshotCache(Path(temp))
@@ -254,6 +352,29 @@ class VulnerabilityCorrelatorTests(unittest.TestCase):
         self.assertEqual(15, len(client.keywords))
         self.assertEqual("Tool 14 1.0", client.keywords[-1])
 
+    def test_enrichment_skips_nvd_queries_for_unversioned_candidates(self):
+        inventory = [
+            InventoryObject("svc", "Services", "service", "Google Chrome Elevation Service", {"Name": "GoogleChromeElevationService"}, "fixture"),
+        ]
+
+        class CountingClient:
+            def __init__(self):
+                self.keywords = []
+
+            def fetch_cisa_kev(self):
+                return [], []
+
+            def fetch_nvd_keyword(self, keyword, limit=2000):
+                self.keywords.append(keyword)
+                return [], []
+
+        client = CountingClient()
+        matches, diagnostics = VulnerabilityCorrelator().enrich_from_sources(inventory, client=client)
+
+        self.assertEqual([], matches)
+        self.assertEqual([], diagnostics)
+        self.assertEqual([], client.keywords)
+
     def test_enrichment_merges_optional_fstec_online_matches(self):
         inventory = [
             InventoryObject("s", "Installed Software", "software", "Example Tool", {"Version": "2.0"}, "fixture")
@@ -293,6 +414,71 @@ class VulnerabilityCorrelatorTests(unittest.TestCase):
         self.assertEqual(["BDU:2026-00001"], [match.cve for match in matches])
         self.assertEqual(inventory, fstec.items)
         self.assertTrue(any(item.module == "fstec_bdu" for item in diagnostics))
+
+    def test_enrichment_uses_local_vulnerability_database_for_hardware_and_exploit_links(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            nvd_payload = {
+                "vulnerabilities": [
+                    {
+                        "cve": {
+                            "id": "CVE-2099-9001",
+                            "descriptions": [
+                                {"lang": "en", "value": "Example BIOS before 2.0 allows code execution."}
+                            ],
+                            "metrics": {
+                                "cvssMetricV31": [
+                                    {"cvssData": {"baseScore": 9.8, "baseSeverity": "CRITICAL"}}
+                                ]
+                            },
+                            "references": [
+                                {"url": "https://exploit.example/CVE-2099-9001", "tags": ["Exploit"]}
+                            ],
+                            "configurations": [
+                                {
+                                    "nodes": [
+                                        {
+                                            "cpeMatch": [
+                                                {
+                                                    "vulnerable": True,
+                                                    "criteria": "cpe:2.3:h:example:example_bios:*:*:*:*:*:*:*:*",
+                                                    "versionEndExcluding": "2.0",
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ],
+                        }
+                    }
+                ]
+            }
+            nvd_path = root / "nvdcve-2.0-2099.json.gz"
+            nvd_path.write_bytes(gzip.compress(json.dumps(nvd_payload).encode("utf-8")))
+            db_path = root / "vulnerability_sources.db"
+            VulnerabilityDatabaseBuilder(root / "snapshots", db_path).build_database(
+                [DownloadedSource("nvd", "2099", "https://nvd.test/2099", nvd_path)]
+            )
+            client = VulnerabilityDatabaseSourceClient(db_path)
+            bios = InventoryObject(
+                "b",
+                "BIOS Version",
+                "bios",
+                "Example BIOS",
+                {"Manufacturer": "Example", "SMBIOSBIOSVersion": "1.5"},
+                "fixture",
+            )
+
+            matches, diagnostics = VulnerabilityCorrelator().enrich_from_sources(
+                [bios],
+                client=client,
+            )
+
+        self.assertEqual(["CVE-2099-9001"], [match.cve for match in matches])
+        self.assertEqual("CRITICAL", matches[0].severity)
+        self.assertEqual(bios.uid, matches[0].object_uid)
+        self.assertIn("https://exploit.example/CVE-2099-9001", matches[0].references)
+        self.assertFalse(any(item.severity == "warning" for item in diagnostics), diagnostics)
 
 
 if __name__ == "__main__":

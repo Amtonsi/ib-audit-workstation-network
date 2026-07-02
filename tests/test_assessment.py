@@ -52,7 +52,7 @@ class AssessmentServiceTests(unittest.TestCase):
         self.assertTrue(any(item.rule_id == "CFG-UAC-001" and item.status == "risk" for item in bundle.rule_results))
         self.assertEqual("risk", bundle.assessments[0].status)
 
-    def test_unversioned_device_is_not_marked_insufficient_only_for_cve_coverage(self):
+    def test_unversioned_device_is_marked_insufficient_for_hardware_cve_coverage(self):
         inventory = [
             InventoryObject("z", "Devices", "device", "Keyboard", {"Name": "Keyboard"}, "fixture")
         ]
@@ -60,6 +60,7 @@ class AssessmentServiceTests(unittest.TestCase):
         bundle = AssessmentService(correlator=OnlineNoMatchCorrelator()).assess(inventory)
 
         coverage_rule = next(item for item in bundle.rule_results if item.rule_id == "VULN-COVERAGE")
-        self.assertEqual("not_applicable", coverage_rule.status)
-        self.assertEqual("not_applicable", bundle.assessments[0].status)
-        self.assertEqual(1, bundle.coverage.not_applicable)
+        self.assertEqual("insufficient_data", coverage_rule.status)
+        self.assertEqual("missing product version", coverage_rule.actual)
+        self.assertEqual("insufficient_data", bundle.assessments[0].status)
+        self.assertEqual(1, bundle.coverage.insufficient_data)

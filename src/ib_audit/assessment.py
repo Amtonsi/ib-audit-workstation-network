@@ -25,6 +25,12 @@ VERSION_REQUIRED_FOR_VULN_COVERAGE = {
     "odbc_driver",
     "oledb_provider",
     "bios",
+    "base_board",
+    "device",
+    "display_adapter",
+    "network_adapter",
+    "physical_disk",
+    "processor",
 }
 
 

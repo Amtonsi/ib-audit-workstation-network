@@ -117,6 +117,36 @@ class HtmlReportBuilderTests(unittest.TestCase):
         self.assertIn("2026-06-29", html)
         self.assertIn("aaaaaaaaaaaa", html)
 
+    def test_report_labels_exploit_references(self):
+        run = AuditRun.create("TEST-PC", True)
+        obj = InventoryObject("b", "BIOS Version", "bios", "Example BIOS", {"Version": "1.5"}, "fixture")
+        result = RuleResult(
+            obj.uid,
+            "CVE-2099-9001",
+            "NVD",
+            "vulnerability",
+            "risk",
+            "critical",
+            "CVE-2099-9001: Example BIOS",
+            "NVD CPE matched Example BIOS",
+            "vendor fixed version",
+            "hardware firmware finding",
+            "high",
+            "Apply firmware update.",
+            [
+                "https://exploit.example/CVE-2099-9001",
+                "http://packetstormsecurity.com/files/131189/example.html",
+                "http://www.securityfocus.com/bid/46680",
+            ],
+        )
+
+        html = HtmlReportBuilder().render(run, [obj], [], self._assessment([obj], [result]))
+
+        self.assertIn("Эксплойт", html)
+        self.assertIn("https://exploit.example/CVE-2099-9001", html)
+        self.assertIn("packetstormsecurity.com", html)
+        self.assertIn("securityfocus.com/bid/46680", html)
+
     def test_summary_separates_document_coverage_from_rule_checked_depth(self):
         run = AuditRun.create("TEST-PC", True)
         risk = InventoryObject("x", "Security", "uac_setting", "UAC", {"EnableLUA": "0"}, "fixture")

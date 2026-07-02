@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import urllib.parse
 from collections import defaultdict
 from pathlib import Path
 
@@ -175,6 +176,7 @@ class BatchHtmlReportBuilder:
                 f"<h3>{html.escape(finding.title)}</h3>"
                 f"<p>{html.escape(finding.evidence)}</p>"
                 f"<p><strong>Рекомендация:</strong> {html.escape(finding.remediation)}</p>"
+                f"{self._reference_links(finding.references)}"
                 f"<div class='host-list'>{hosts}</div></article>"
             )
         content = "".join(cards) or (
@@ -254,6 +256,7 @@ class BatchHtmlReportBuilder:
             f"<h4>{html.escape(result.rule_id)} · {html.escape(result.title)}</h4>"
             f"<p>{html.escape(result.evidence)}</p>"
             f"<p><strong>Рекомендация:</strong> {html.escape(result.remediation)}</p>"
+            f"{self._reference_links(result.references)}"
             "</article>"
             for result in findings
         ) or "<p class='empty'>Подтверждённые риски не найдены.</p>"
@@ -418,6 +421,28 @@ class BatchHtmlReportBuilder:
         return text if len(text) <= 4000 else text[:4000] + "…"
 
     @staticmethod
+    def _reference_links(references: list[str]) -> str:
+        links = []
+        for ref in references:
+            parsed = urllib.parse.urlparse(ref)
+            if parsed.scheme in {"http", "https"} and parsed.netloc:
+                safe = html.escape(ref, quote=True)
+                label = "Эксплойт" if BatchHtmlReportBuilder._is_exploit_reference(ref) else "Источник"
+                links.append(
+                    f"<a class='reference-link' href='{safe}' rel='noreferrer'>"
+                    f"<span>{html.escape(label)}</span> {safe}</a>"
+                )
+        return "<div class='reference-list'>" + "".join(links) + "</div>" if links else ""
+
+    @staticmethod
+    def _is_exploit_reference(ref: str) -> bool:
+        lowered = ref.casefold()
+        return any(
+            marker in lowered
+            for marker in ("exploit", "exploit-db", "metasploit", "packetstormsecurity", "0day.today")
+        ) or "packetstormsecurity.com" in lowered or "securityfocus.com/bid" in lowered
+
+    @staticmethod
     def _styles() -> str:
         return """<style>
 :root{--ink:#172126;--muted:#62727a;--canvas:#f3f6f8;--panel:#fff;--line:#dce3e7;--teal:#0f766e;--red:#b91c1c;--amber:#b45309;--green:#15803d;--blue:#2563eb}
@@ -438,6 +463,7 @@ table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{padding:9px;b
 .filter-row{display:flex;gap:6px;flex-wrap:wrap}.filter-row button{border:1px solid var(--line);background:#fff;padding:7px 10px;border-radius:7px;cursor:pointer}.filter-row button:hover{border-color:var(--teal);color:var(--teal)}
 .finding-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:10px}.finding-card{border:1px solid var(--line);border-left:5px solid #64748b;border-radius:9px;padding:14px}.finding-card.critical,.host-finding.critical{border-left-color:var(--red)}.finding-card.high,.host-finding.high{border-left-color:var(--amber)}
 .finding-head{align-items:center;justify-content:flex-start}.affected{margin-left:auto;color:var(--muted);font-size:12px}.severity{background:#e2e8f0;color:#475569}.severity.critical{background:#fee2e2;color:#991b1b}.severity.high{background:#ffedd5;color:#9a3412}.severity.medium{background:#dbeafe;color:#1d4ed8}.host-list{display:flex;gap:5px;flex-wrap:wrap}
+.reference-list{margin:8px 0}.reference-link{display:inline-block;margin:4px 6px 0 0;color:#1d4ed8}.reference-link span{background:#fee2e2;color:#991b1b;border-radius:999px;padding:2px 6px;font-size:11px;font-weight:700}
 .coverage-bar{height:12px;background:#e7edef;border-radius:999px;overflow:hidden;margin:14px 0}.coverage-bar span{display:block;height:100%;background:var(--teal);border-radius:999px}
 .document-section{padding:0;overflow:hidden}.document-section>details>summary{display:flex;justify-content:space-between;gap:15px;align-items:center;cursor:pointer;padding:17px 20px;background:#f8fafb}.document-section>details>summary::marker{color:var(--teal)}.document-section summary strong{font-size:18px}.document-section summary small{display:block;color:var(--muted);margin-top:3px}.summary-risk{color:var(--red);font-weight:700}.document-body{padding:4px 20px 20px}
 .host-findings{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:8px}.host-finding{border:1px solid var(--line);border-left:5px solid #64748b;border-radius:8px;padding:12px}.host-finding .severity{float:right}.category{border:1px solid var(--line);border-radius:8px;margin:8px 0}.category>summary{cursor:pointer;font-weight:700;padding:11px 13px;background:#f8fafb}.category>summary span{float:right;background:#e2e8f0;border-radius:999px;padding:2px 7px;font-size:11px}

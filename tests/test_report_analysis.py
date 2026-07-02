@@ -14,6 +14,8 @@ from ib_audit.cancellation import CancellationToken
 from ib_audit.models import CollectorDiagnostic, VulnerabilityMatch
 from ib_audit.repository import SQLiteRepository
 from ib_audit.source_cache import SnapshotCache
+from ib_audit.vulnerabilities import VulnerabilityDatabaseSourceClient
+from ib_audit.vulnerability_database import VulnerabilityDatabaseBuilder
 from tests.test_report_import import IB_AUDIT_HTML
 
 
@@ -180,6 +182,25 @@ class ReportAnalysisTests(unittest.TestCase):
         fstec_class.assert_not_called()
         source_client = correlator_class.call_args.kwargs["source_client"]
         self.assertFalse(source_client.online)
+
+    @patch("ib_audit.app.VulnerabilityCorrelator")
+    @patch("ib_audit.app.FstecBduClient")
+    def test_default_correlator_prefers_local_vulnerability_database(self, fstec_class, correlator_class):
+        db_path = self.temp_dir / "vulnerability-database" / "vulnerability_sources.db"
+        VulnerabilityDatabaseBuilder(db_path.parent / "snapshots", db_path).build_database([])
+        cache = SnapshotCache(self.temp_dir / "cache")
+
+        _create_vulnerability_correlator(
+            cache=cache,
+            online_sources=True,
+            vulnerability_mode="fast",
+            vulnerability_db_path=db_path,
+        )
+
+        fstec_class.assert_not_called()
+        source_client = correlator_class.call_args.kwargs["source_client"]
+        self.assertIsInstance(source_client, VulnerabilityDatabaseSourceClient)
+        self.assertEqual(db_path, source_client.db_path)
 
 
 if __name__ == "__main__":

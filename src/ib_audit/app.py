@@ -20,7 +20,7 @@ from .models import AuditRun, ReportRecord, utc_now
 from .report_import import ReportImportError, import_audit_report
 from .repository import SQLiteRepository
 from .report import HtmlReportBuilder
-from .vulnerabilities import VulnerabilityCorrelator
+from .vulnerabilities import VulnerabilityCorrelator, VulnerabilityDatabaseSourceClient
 from .vulnerabilities import VulnerabilitySourceClient
 from .source_cache import SnapshotCache
 from .vulnerability_database import (
@@ -84,6 +84,7 @@ def _create_vulnerability_correlator(
     cache: SnapshotCache | None = None,
     online_sources: bool = True,
     vulnerability_mode: str = VULNERABILITY_MODE_FULL,
+    vulnerability_db_path: str | Path | None = None,
 ) -> VulnerabilityCorrelator:
     mode = normalize_vulnerability_mode(vulnerability_mode)
     source_online = online_sources and mode == VULNERABILITY_MODE_FULL
@@ -92,6 +93,11 @@ def _create_vulnerability_correlator(
         fstec_client = FstecBduClient() if cache is None else FstecBduClient(cache=cache, online=True)
     else:
         fstec_client = None
+    if vulnerability_db_path:
+        return VulnerabilityCorrelator(
+            fstec_client=fstec_client,
+            source_client=VulnerabilityDatabaseSourceClient(vulnerability_db_path),
+        )
     if cache is None and source_online:
         return VulnerabilityCorrelator(fstec_client=fstec_client)
     return VulnerabilityCorrelator(
@@ -124,6 +130,7 @@ def run_audit(
             SnapshotCache(output / "cache"),
             online_sources,
             vulnerability_mode=vulnerability_mode,
+            vulnerability_db_path=find_vulnerability_database(output) or find_vulnerability_database(Path.cwd()),
         )
     )
     try:
@@ -256,12 +263,14 @@ def _analysis_service(
     correlator: VulnerabilityCorrelator | None = None,
     assessment_service: AssessmentService | None = None,
 ) -> AssessmentService:
+    vulnerability_db_path = find_vulnerability_database(output) or find_vulnerability_database(Path.cwd())
     return assessment_service or AssessmentService(
         correlator
         or _create_vulnerability_correlator(
             SnapshotCache(output / "cache"),
             online_sources,
             vulnerability_mode=vulnerability_mode,
+            vulnerability_db_path=vulnerability_db_path,
         )
     )
 

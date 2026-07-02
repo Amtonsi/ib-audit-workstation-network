@@ -283,8 +283,20 @@ class HtmlReportBuilder:
             parsed = urllib.parse.urlparse(ref)
             if parsed.scheme in {"http", "https"} and parsed.netloc:
                 safe = html.escape(ref, quote=True)
-                links.append(f"<a href='{safe}' rel='noreferrer'>{safe}</a>")
+                label = "Эксплойт" if HtmlReportBuilder._is_exploit_reference(ref) else "Источник"
+                links.append(
+                    f"<a class='reference-link' href='{safe}' rel='noreferrer'>"
+                    f"<span>{html.escape(label)}</span> {safe}</a>"
+                )
         return " ".join(links)
+
+    @staticmethod
+    def _is_exploit_reference(ref: str) -> bool:
+        lowered = ref.casefold()
+        return any(
+            marker in lowered
+            for marker in ("exploit", "exploit-db", "metasploit", "packetstormsecurity", "0day.today")
+        ) or "packetstormsecurity.com" in lowered or "securityfocus.com/bid" in lowered
 
     @staticmethod
     def _status_label(status: str) -> str:
@@ -323,6 +335,7 @@ h2{margin:0 0 12px}.meta{color:#4b5563}.kpis{display:grid;grid-template-columns:
 .status.risk{background:#fee2e2;color:#991b1b}.status.passed{background:#dcfce7;color:#166534}
 .status.insufficient_data{background:#ffedd5;color:#9a3412}.status.not_applicable{background:#e2e8f0;color:#475569}
 .warning,.unavailable{color:#9a3412}.rule{padding:8px;margin-top:7px;background:#f8fafc;border-radius:6px}
+.reference-link{display:inline-block;margin:4px 6px 0 0;color:#1d4ed8}.reference-link span{background:#fee2e2;color:#991b1b;border-radius:999px;padding:2px 6px;font-size:11px;font-weight:700}
 .limit-note{background:#fff7ed;color:#9a3412;padding:8px}table{border-collapse:collapse;width:100%;table-layout:fixed}
 td,th{border:1px solid #e5e7eb;padding:8px;text-align:left;vertical-align:top;overflow-wrap:anywhere;word-break:break-word}.item-value td:first-child{width:260px;font-weight:600}
 .item-value td:last-child{overflow-wrap:anywhere;word-break:break-word}.filters{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.filters button,.filters select{max-width:100%;margin:0 6px 8px 0}footer{color:#6b7280;font-size:12px}

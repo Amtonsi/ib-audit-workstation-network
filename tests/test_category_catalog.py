@@ -17,3 +17,9 @@ class CategoryCatalogTests(unittest.TestCase):
         category = category_for_name("Vendor Extension")
         self.assertEqual("Vendor Extension", category.name)
         self.assertEqual("unknown", category.object_type)
+
+    def test_russian_winaudit_hardware_sections_map_to_vulnerability_candidates(self):
+        self.assertEqual("device", category_for_name("Диспетчер устройств").object_type)
+        self.assertEqual("bios", category_for_name("Версия BIOS").object_type)
+        self.assertEqual("physical_disk", category_for_name("Жесткие диски").object_type)
+        self.assertEqual("network_adapter", category_for_name("Network Adapters").object_type)

@@ -58,6 +58,7 @@ class CommonFinding:
     title: str
     evidence: str
     remediation: str
+    references: list[str]
     hostnames: list[str]
 
 
@@ -134,6 +135,7 @@ class BatchAssessment:
                     title=result.title,
                     evidence=result.evidence,
                     remediation=result.remediation,
+                    references=list(result.references),
                     hostnames=sorted(
                         [str(item) for item in hostnames],
                         key=str.casefold,

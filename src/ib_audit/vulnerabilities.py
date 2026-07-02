@@ -3,14 +3,18 @@ from __future__ import annotations
 import json
 import hashlib
 import re
+import sqlite3
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from .cancellation import CancellationToken
 from .models import CollectorDiagnostic, InventoryObject, SourceSnapshot, VulnerabilityMatch
 from .normalization import product_identity
 from .source_cache import SnapshotCache
+from .vulnerability_database import is_vulnerability_database
 
 
 class VulnerabilitySourceClient:
@@ -68,10 +72,254 @@ class VulnerabilitySourceClient:
             return [], [CollectorDiagnostic("vulnerability_sources", "warning", f"NVD unavailable for {keyword}: {exc}", url)]
 
 
+class VulnerabilityDatabaseSourceClient:
+    hardware_types = {
+        "bios",
+        "base_board",
+        "device",
+        "display_adapter",
+        "network_adapter",
+        "physical_disk",
+        "processor",
+    }
+    operating_system_types = {"operating_system"}
+
+    def __init__(self, db_path: str | Path):
+        self.db_path = Path(db_path)
+        self.used_snapshots: list[SourceSnapshot] = []
+        self._usable_fts: bool | None = None
+        if not is_vulnerability_database(self.db_path):
+            raise ValueError(f"Not a vulnerability database: {self.db_path}")
+
+    def fetch_cisa_kev(self) -> tuple[list[dict[str, Any]], list[CollectorDiagnostic]]:
+        try:
+            rows = self._fetch_rows("select raw_json from cisa_kev")
+            self._record_snapshot()
+            return [json.loads(str(row[0])) for row in rows], [
+                CollectorDiagnostic("vulnerability_sources", "info", "database: CISA KEV", str(self.db_path))
+            ]
+        except Exception as exc:
+            return [], [
+                CollectorDiagnostic("vulnerability_sources", "warning", f"CISA KEV database unavailable: {exc}", str(self.db_path))
+            ]
+
+    def fetch_nvd_keyword(self, keyword: str, limit: int = 2000) -> tuple[list[dict[str, Any]], list[CollectorDiagnostic]]:
+        terms = self._query_terms(keyword)
+        return self._fetch_nvd_by_terms(keyword, terms[:2], (), limit=limit)
+
+    def fetch_nvd_for_object(
+        self,
+        obj: InventoryObject,
+        limit: int = 2000,
+    ) -> tuple[list[dict[str, Any]], list[CollectorDiagnostic]]:
+        identity = product_identity(obj)
+        product_terms = self._query_terms(" ".join([identity.product, obj.title]))
+        vendor_terms = self._query_terms(identity.vendor)
+        terms = []
+        if vendor_terms:
+            terms.append(vendor_terms[0])
+        for term in product_terms:
+            if term not in terms:
+                terms.append(term)
+        parts = self._cpe_parts_for_object(obj.object_type)
+        return self._fetch_nvd_by_terms(obj.title, terms[:2], parts, limit=limit)
+
+    def _fetch_nvd_by_terms(
+        self,
+        label: str,
+        terms: list[str],
+        parts: tuple[str, ...],
+        limit: int,
+    ) -> tuple[list[dict[str, Any]], list[CollectorDiagnostic]]:
+        if not terms:
+            return [], [
+                CollectorDiagnostic("vulnerability_sources", "info", f"database skipped: {label}", str(self.db_path))
+            ]
+        try:
+            self._record_snapshot()
+            if self._has_usable_fts():
+                records = self._query_nvd_affected_products_fts(terms, parts, limit)
+            elif self._has_table("nvd_affected_products"):
+                records = self._query_nvd_affected_products(terms, parts, limit)
+            else:
+                records = self._query_nvd_raw_text(terms, limit)
+            return records, [
+                CollectorDiagnostic("vulnerability_sources", "info", f"database: {label}", str(self.db_path))
+            ]
+        except Exception as exc:
+            return [], [
+                CollectorDiagnostic("vulnerability_sources", "warning", f"NVD database unavailable for {label}: {exc}", str(self.db_path))
+            ]
+
+    def _query_nvd_affected_products(
+        self,
+        terms: list[str],
+        parts: tuple[str, ...],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        where = ["p.vulnerable = 1"]
+        params: list[object] = []
+        if parts:
+            where.append("p.part in (" + ",".join("?" for _ in parts) + ")")
+            params.extend(parts)
+        for term in terms:
+            where.append("p.search_text like ?")
+            params.append(f"%{term.casefold()}%")
+        params.append(limit)
+        rows = self._fetch_rows(
+            f"""
+            select distinct c.raw_json
+            from nvd_cves c
+            join nvd_affected_products p on p.cve_id = c.cve_id
+            where {' and '.join(where)}
+            order by coalesce(c.cvss, 0) desc, c.cve_id
+            limit ?
+            """,
+            params,
+        )
+        return self._nvd_records_from_rows(rows, require_configuration=True)
+
+    def _query_nvd_affected_products_fts(
+        self,
+        terms: list[str],
+        parts: tuple[str, ...],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        where = ["f.search_text match ?"]
+        params: list[object] = [self._fts_query(terms)]
+        if parts:
+            where.append("f.part in (" + ",".join("?" for _ in parts) + ")")
+            params.extend(parts)
+        params.append(limit)
+        rows = self._fetch_rows(
+            f"""
+            select distinct c.raw_json
+            from nvd_affected_products_fts f
+            join nvd_cves c on c.cve_id = f.cve_id
+            where {' and '.join(where)}
+            order by coalesce(c.cvss, 0) desc, c.cve_id
+            limit ?
+            """,
+            params,
+        )
+        return self._nvd_records_from_rows(rows, require_configuration=True)
+
+    def _query_nvd_raw_text(self, terms: list[str], limit: int) -> list[dict[str, Any]]:
+        where = []
+        params: list[object] = []
+        for term in terms:
+            where.append("(descriptions_json like ? or configurations_json like ?)")
+            params.extend([f"%{term}%", f"%{term}%"])
+        params.append(limit)
+        rows = self._fetch_rows(
+            f"""
+            select raw_json
+            from nvd_cves
+            where {' and '.join(where)}
+            order by coalesce(cvss, 0) desc, cve_id
+            limit ?
+            """,
+            params,
+        )
+        return self._nvd_records_from_rows(rows, require_configuration=True)
+
+    def _fetch_rows(self, sql: str, params: list[object] | tuple[object, ...] = ()) -> list[sqlite3.Row]:
+        con = sqlite3.connect(self.db_path)
+        con.row_factory = sqlite3.Row
+        try:
+            return list(con.execute(sql, params).fetchall())
+        finally:
+            con.close()
+
+    @staticmethod
+    def _nvd_records_from_rows(
+        rows: list[sqlite3.Row],
+        require_configuration: bool,
+    ) -> list[dict[str, Any]]:
+        records = [json.loads(str(row[0])) for row in rows]
+        if require_configuration:
+            for record in records:
+                record["_ib_match_requires_configuration"] = True
+        return records
+
+    def _has_table(self, name: str) -> bool:
+        rows = self._fetch_rows(
+            "select name from sqlite_master where type='table' and name=?",
+            (name,),
+        )
+        return bool(rows)
+
+    def _has_usable_fts(self) -> bool:
+        if self._usable_fts is not None:
+            return self._usable_fts
+        if not self._has_table("nvd_affected_products_fts"):
+            self._usable_fts = False
+            return False
+        rows = self._fetch_rows("select count(*) from nvd_affected_products_fts")
+        self._usable_fts = bool(rows and int(rows[0][0]) > 0)
+        return self._usable_fts
+
+    def _record_snapshot(self) -> None:
+        if self.used_snapshots:
+            return
+        stat = self.db_path.stat()
+        stamp = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).replace(microsecond=0).isoformat()
+        digest = hashlib.sha256(f"{self.db_path.resolve()}:{stat.st_size}:{stamp}".encode("utf-8")).hexdigest()
+        self.used_snapshots.append(
+            SourceSnapshot(
+                id=digest,
+                source="vulnerability-db",
+                cache_key=self.db_path.name,
+                path=str(self.db_path),
+                sha256=digest,
+                fetched_at=stamp,
+                status="active",
+                metadata={"size_bytes": stat.st_size},
+            )
+        )
+
+    @staticmethod
+    def _query_terms(text: str) -> list[str]:
+        blocked = {
+            "inc",
+            "corp",
+            "corporation",
+            "company",
+            "limited",
+            "ltd",
+            "driver",
+            "drivers",
+            "software",
+            "version",
+        }
+        return [
+            item
+            for item in re.findall(r"[a-z0-9]+", text.casefold())
+            if len(item) >= 3 and item not in blocked
+        ]
+
+    @staticmethod
+    def _fts_query(terms: list[str]) -> str:
+        unique_terms = []
+        for term in terms:
+            if term not in unique_terms:
+                unique_terms.append(term)
+        return " ".join(unique_terms)
+
+    @classmethod
+    def _cpe_parts_for_object(cls, object_type: str) -> tuple[str, ...]:
+        if object_type in cls.operating_system_types:
+            return ("o",)
+        if object_type in cls.hardware_types:
+            return ("h", "o")
+        return ("a",)
+
+
 class VulnerabilityCorrelator:
     candidate_types = {
         "software", "operating_system", "service", "driver",
         "odbc_driver", "oledb_provider", "bios", "device",
+        "base_board", "display_adapter", "network_adapter", "physical_disk", "processor",
     }
     def __init__(self, fstec_client=None, source_client=None):
         self.fstec_client = fstec_client
@@ -116,8 +364,11 @@ class VulnerabilityCorrelator:
                 cve = str(record.get("id", ""))
                 description = self._description(record)
                 configuration_match = self._matches_configurations(obj, record)
+                require_configuration = bool(record.get("_ib_match_requires_configuration"))
                 matches_record = configuration_match is True or (
-                    configuration_match is None and self._matches_description(obj, description)
+                    not require_configuration
+                    and configuration_match is None
+                    and self._matches_description(obj, description)
                 )
                 if cve and matches_record:
                     key = (cve, obj.title)
@@ -162,7 +413,10 @@ class VulnerabilityCorrelator:
             keyword_objects = keyword_objects[:max_nvd_queries]
         for keyword, obj in keyword_objects:
             token.raise_if_cancelled()
-            records, diag = client.fetch_nvd_keyword(keyword)
+            if hasattr(client, "fetch_nvd_for_object"):
+                records, diag = client.fetch_nvd_for_object(obj)
+            else:
+                records, diag = client.fetch_nvd_keyword(keyword)
             token.raise_if_cancelled()
             diagnostics.extend(diag)
             matches.extend(self.match_inventory([obj], [], records))
@@ -260,7 +514,7 @@ class VulnerabilityCorrelator:
     @staticmethod
     def _match_terms(text: str) -> list[str]:
         stop_words = {"and", "for", "the", "with", "multiple", "product", "products", "software", "application", "apps"}
-        return [word for word in re.findall(r"[a-z0-9]+", text.lower()) if len(word) >= 3 and word not in stop_words]
+        return [word for word in re.findall(r"[a-z0-9]+", text.lower()) if len(word) >= 2 and word not in stop_words]
 
     @staticmethod
     def _description(record: dict[str, Any]) -> str:
@@ -272,12 +526,14 @@ class VulnerabilityCorrelator:
     def _matches_description(self, obj: InventoryObject, description: str) -> bool:
         text = self._inventory_text(obj)
         description_l = description.lower()
+        version = self._version(obj)
+        if not version:
+            return False
         title_words = [word for word in re.split(r"\W+", obj.title.lower()) if len(word) >= 4]
         if title_words and all(word in description_l for word in title_words[:2]):
             return True
         vendor = str(obj.fields.get("Vendor") or obj.fields.get("Publisher") or "").lower()
         product = obj.title.lower()
-        version = self._version(obj)
         return bool(product and product in description_l and (not vendor or vendor in description_l) and (not version or version in description_l or version in text))
 
     @staticmethod
@@ -289,10 +545,7 @@ class VulnerabilityCorrelator:
 
     @classmethod
     def _matches_configurations(cls, obj: InventoryObject, record: dict[str, Any]) -> bool | None:
-        cpe_matches: list[dict[str, Any]] = []
-        for configuration in record.get("configurations", []):
-            for node in configuration.get("nodes", []):
-                cpe_matches.extend(node.get("cpeMatch", []))
+        cpe_matches = cls._cpe_matches(record)
         if not cpe_matches:
             return None
         identity = product_identity(obj)
@@ -313,10 +566,65 @@ class VulnerabilityCorrelator:
                 continue
             compatible_seen = True
             if not identity.version:
-                return True
+                return False
+            cpe_version = parts[5].replace("_", " ")
+            if cls._is_generic_os_cpe_without_version(obj, cpe_product, cpe_version, item):
+                continue
+            if not cls._version_matches_cpe(identity.version, cpe_version):
+                continue
             if cls._version_in_range(identity.version, item):
                 return True
         return False if compatible_seen else None
+
+    @staticmethod
+    def _is_generic_os_cpe_without_version(
+        obj: InventoryObject,
+        cpe_product: set[str],
+        cpe_version: str,
+        item: dict[str, Any],
+    ) -> bool:
+        has_range = any(
+            item.get(key)
+            for key in (
+                "versionStartIncluding",
+                "versionStartExcluding",
+                "versionEndIncluding",
+                "versionEndExcluding",
+            )
+        )
+        return (
+            obj.object_type == "operating_system"
+            and cpe_product <= {"windows"}
+            and cpe_version.strip() in {"", "*", "-"}
+            and not has_range
+        )
+
+    @classmethod
+    def _cpe_matches(cls, record: dict[str, Any]) -> list[dict[str, Any]]:
+        cpe_matches: list[dict[str, Any]] = []
+
+        def visit(node: dict[str, Any]) -> None:
+            cpe_matches.extend(item for item in node.get("cpeMatch", []) if isinstance(item, dict))
+            for child in node.get("children", []):
+                if isinstance(child, dict):
+                    visit(child)
+
+        for configuration in record.get("configurations", []):
+            for node in configuration.get("nodes", []):
+                if isinstance(node, dict):
+                    visit(node)
+        return cpe_matches
+
+    @classmethod
+    def _version_matches_cpe(cls, version: str, cpe_version: str) -> bool:
+        cpe_version = cpe_version.strip()
+        if cpe_version in {"", "*", "-"}:
+            return True
+        current = cls._version_tuple(version)
+        required = cls._version_tuple(cpe_version)
+        if current is not None and required is not None:
+            return current == required
+        return version.casefold() == cpe_version.casefold()
 
     @classmethod
     def _version_in_range(cls, version: str, item: dict[str, Any]) -> bool:
@@ -381,6 +689,10 @@ class VulnerabilityCorrelator:
         for obj in inventory:
             title = obj.title.strip()
             version = str(obj.fields.get("DisplayVersion") or obj.fields.get("Version") or "").strip()
+            if not version:
+                version = VulnerabilityCorrelator._version(obj).strip()
+            if not version:
+                continue
             keyword = f"{title} {version}".strip()
             if len(keyword) >= 4 and keyword.lower() not in seen:
                 seen.add(keyword.lower())
