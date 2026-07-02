@@ -64,6 +64,7 @@ def update_vulnerability_database(
     include_delta: bool = True,
     progress=None,
     download_progress=None,
+    cancel_token: CancellationToken | None = None,
 ) -> dict[str, object]:
     output = Path(output_dir or default_output_dir() / "vulnerability-database")
     root = Path(project_root or Path.cwd())
@@ -76,6 +77,7 @@ def update_vulnerability_database(
         include_delta=include_delta,
         progress=progress,
         download_progress=download_progress,
+        cancel_token=cancel_token,
     )
     return {"db_path": db_path, "snapshot_dir": snapshot_dir, "stats": stats}
 

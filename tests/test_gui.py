@@ -86,6 +86,37 @@ class AuditWindowReportImportTests(unittest.TestCase):
         self.assertLess(narrow.path_wraplength, desktop.path_wraplength)
         self.assertGreaterEqual(narrow.path_wraplength, 320)
 
+    def test_responsive_layout_caps_wraplengths_on_maximized_window(self):
+        layout = responsive_layout_for_width(1920)
+
+        self.assertLessEqual(layout.path_wraplength, 1180)
+        self.assertLessEqual(layout.status_wraplength, 380)
+        self.assertLessEqual(layout.header_wraplength, 1080)
+
+    def test_minimized_configure_event_does_not_reflow_layout(self):
+        window = AuditWindow.__new__(AuditWindow)
+        window.root = Mock()
+        window.root.state.return_value = "iconic"
+        window._last_responsive_layout = None
+        window._configure_widget = Mock()
+        event = type("Event", (), {"width": 1, "height": 1, "widget": window.root})()
+
+        window._on_root_configure(event)
+
+        window._configure_widget.assert_not_called()
+
+    def test_child_configure_event_does_not_reflow_root_layout(self):
+        window = AuditWindow.__new__(AuditWindow)
+        window.root = Mock()
+        window.root.state.return_value = "normal"
+        window._last_responsive_layout = None
+        window._configure_widget = Mock()
+        event = type("Event", (), {"width": 1080, "height": 740, "widget": object()})()
+
+        window._on_root_configure(event)
+
+        window._configure_widget.assert_not_called()
+
     def test_repeated_configure_event_same_width_does_not_reapply_layout(self):
         window = AuditWindow.__new__(AuditWindow)
         window._last_responsive_layout = None
@@ -421,19 +452,35 @@ class AuditWindowReportImportTests(unittest.TestCase):
     @patch("ib_audit.gui_tk.update_vulnerability_database")
     def test_source_update_uses_sqlite_database_updater(self, update_database):
         window = self._window()
+        token = CancellationToken()
         update_database.return_value = {
             "db_path": Path("C:/project/vulnerability-database/vulnerability_sources.db"),
             "snapshot_dir": Path("C:/project/vulnerability-database/snapshots"),
             "stats": {"reused_sources": 1, "updated_sources": 2, "source_files": 3},
         }
 
-        window._run_source_update()
+        window._run_source_update(token)
 
         update_database.assert_called_once()
         self.assertEqual(Path("C:/outputs/vulnerability-database"), update_database.call_args.kwargs["output_dir"])
+        self.assertIs(token, update_database.call_args.kwargs["cancel_token"])
         messages = list(window.messages.queue)
         self.assertTrue(any(message.startswith("__SOURCES__:") for message in messages))
         self.assertIn("__STATUS__:Базы обновлены", messages)
+
+    @patch("ib_audit.gui_tk.threading.Thread")
+    def test_update_sources_keeps_cancel_available(self, thread_factory):
+        window = self._window()
+
+        window._update_sources()
+
+        self.assertIsNotNone(window.active_cancel_token)
+        self.assertEqual("normal", window.cancel_button.options["state"])
+        thread_factory.assert_called_once_with(
+            target=window._run_source_update,
+            args=(window.active_cancel_token,),
+            daemon=True,
+        )
 
 
 if __name__ == "__main__":

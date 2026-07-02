@@ -85,6 +85,10 @@ def _safe_screen_value(value: int, fallback: int) -> int:
     return parsed if parsed > 0 else fallback
 
 
+def _bounded(value: int, minimum: int, maximum: int) -> int:
+    return min(maximum, max(minimum, int(value)))
+
+
 def window_bounds_for_screen(screen_width: int, screen_height: int) -> WindowBounds:
     width = _safe_screen_value(screen_width, 1366)
     height = _safe_screen_value(screen_height, 768)
@@ -109,10 +113,10 @@ def responsive_layout_for_width(width: int) -> ResponsiveLayout:
             workspace_padding=(12, 12, 12, 12),
             header_padding=(18, 14),
             footer_padding=(14, 4, 16, 8),
-            path_wraplength=max(320, window_width - 430),
-            status_wraplength=max(220, window_width - 520),
+            path_wraplength=_bounded(window_width - 430, 320, 520),
+            status_wraplength=_bounded(window_width - 520, 220, 280),
             note_wraplength=180,
-            header_wraplength=max(320, window_width - 260),
+            header_wraplength=_bounded(window_width - 260, 320, 520),
         )
     if window_width < 1040:
         return ResponsiveLayout(
@@ -121,10 +125,10 @@ def responsive_layout_for_width(width: int) -> ResponsiveLayout:
             workspace_padding=(16, 16, 18, 14),
             header_padding=(22, 16),
             footer_padding=(18, 4, 20, 8),
-            path_wraplength=max(420, window_width - 470),
-            status_wraplength=max(260, window_width - 560),
+            path_wraplength=_bounded(window_width - 470, 420, 760),
+            status_wraplength=_bounded(window_width - 560, 260, 320),
             note_wraplength=206,
-            header_wraplength=max(420, window_width - 290),
+            header_wraplength=_bounded(window_width - 290, 420, 720),
         )
     return ResponsiveLayout(
         rail_width=286,
@@ -132,10 +136,10 @@ def responsive_layout_for_width(width: int) -> ResponsiveLayout:
         workspace_padding=(22, 20, 24, 18),
         header_padding=(26, 18),
         footer_padding=(20, 4, 24, 8),
-        path_wraplength=max(560, window_width - 430),
-        status_wraplength=max(320, window_width - 620),
+        path_wraplength=_bounded(window_width - 430, 560, 1180),
+        status_wraplength=_bounded(window_width - 620, 320, 380),
         note_wraplength=232,
-        header_wraplength=max(560, window_width - 320),
+        header_wraplength=_bounded(window_width - 320, 560, 1080),
     )
 
 
@@ -632,8 +636,20 @@ class AuditWindow:
         self._log("Рабочая станция готова. Для полного сбора запустите приложение от администратора.")
 
     def _on_root_configure(self, event: object) -> None:
+        root = getattr(self, "root", None)
+        if root is not None and getattr(event, "widget", root) is not root:
+            return
+        if root is not None and hasattr(root, "state"):
+            try:
+                if root.state() in {"iconic", "withdrawn"}:
+                    return
+            except Exception:
+                pass
         width = int(getattr(event, "width", 0) or 0)
         if width <= 0:
+            return
+        height = getattr(event, "height", None)
+        if height is not None and (width < 200 or int(height or 0) < 200):
             return
         self._apply_responsive_layout(width)
 
@@ -798,18 +814,22 @@ class AuditWindow:
         self._set_progress_status("Прогресс: выполняется отмена…")
 
     def _update_sources(self) -> None:
-        self._set_busy(True, "Обновление баз")
-        threading.Thread(target=self._run_source_update, daemon=True).start()
+        token = self._begin_operation("Обновление баз")
+        threading.Thread(target=self._run_source_update, args=(token,), daemon=True).start()
 
-    def _run_source_update(self) -> None:
+    def _run_source_update(self, cancel_token: CancellationToken | None = None) -> None:
         try:
             result = update_vulnerability_database(
                 output_dir=Path(self.output_dir.get()) / "vulnerability-database",
                 project_root=Path.cwd(),
                 progress=self.messages.put,
+                cancel_token=cancel_token,
             )
             self.messages.put("__SOURCES__:" + format_database_update_status(result))
             self.messages.put("__STATUS__:Базы обновлены")
+        except AuditCancelled:
+            self.messages.put("Обновление баз отменено пользователем.")
+            self.messages.put("__STATUS__:cancelled:Обновление баз отменено")
         except Exception as exc:
             self.messages.put(f"Ошибка обновления баз: {exc}")
             self.messages.put("__STATUS__:Ошибка обновления")
