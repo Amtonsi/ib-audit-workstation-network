@@ -3,14 +3,19 @@ from __future__ import annotations
 from .models import InventoryObject, ProductIdentity, WindowsProfile
 
 
-IDENTITY_VENDOR_KEYS = ("Vendor", "Publisher", "Manufacturer", "CompanyName", "DriverProviderName", "Provider")
+IDENTITY_VENDOR_KEYS = (
+    "Vendor", "Publisher", "Manufacturer", "CompanyName", "BIOS Vendor",
+    "Driver Provider", "DriverProviderName", "Provider",
+)
 IDENTITY_PRODUCT_KEYS = (
     "DisplayName", "ProductName", "Product", "Model", "Board Number",
-    "Caption", "Name", "DeviceName", "Device ID",
+    "Caption", "Name", "DeviceName", "Device Name", "Adapter Name",
+    "Description", "Device ID",
 )
 IDENTITY_VERSION_KEYS = (
-    "DisplayVersion", "Version", "FileVersion", "DriverVersion", "SMBIOSBIOSVersion",
-    "FirmwareVersion", "BIOS Version", "BuildNumber",
+    "DisplayVersion", "Version", "FileVersion", "Driver Version", "DriverVersion",
+    "SMBIOSBIOSVersion", "FirmwareVersion", "Firmware Revision", "BIOS Version",
+    "BuildNumber",
 )
 
 
