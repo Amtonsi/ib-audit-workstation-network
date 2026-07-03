@@ -329,6 +329,54 @@ class VulnerabilityCorrelatorTests(unittest.TestCase):
         matches, diagnostics = VulnerabilityCorrelator().enrich_from_sources(inventory, client=FakeClient())
         self.assertEqual([match.affected_title for match in matches], ["Alpha Tool"])
 
+    def test_enrichment_fans_one_query_out_to_all_duplicate_product_objects(self):
+        first = InventoryObject(
+            "s",
+            "Installed Software",
+            "software",
+            "SQL Server 2012 Common Files",
+            {"Vendor": "Microsoft", "Version": "11.1.3000.0", "Software ID": "{ONE}"},
+            "fixture",
+        )
+        second = InventoryObject(
+            "s",
+            "Installed Software",
+            "software",
+            "SQL Server 2012 Common Files",
+            {"Vendor": "Microsoft", "Version": "11.1.3000.0", "Software ID": "{TWO}"},
+            "fixture",
+        )
+
+        class OneRecordClient:
+            def fetch_cisa_kev(self):
+                return [], []
+
+            def fetch_nvd_for_object(self, obj):
+                return [
+                    {
+                        "id": "CVE-2099-1200",
+                        "_ib_match_requires_configuration": True,
+                        "configurations": [{"nodes": [{"cpeMatch": [{
+                            "vulnerable": True,
+                            "criteria": "cpe:2.3:a:microsoft:sql_server:*:*:*:*:*:*:*:*",
+                            "versionEndExcluding": "11.2",
+                        }]}]}],
+                        "descriptions": [
+                            {
+                                "lang": "en",
+                                "value": "Microsoft SQL Server before 11.2 is vulnerable.",
+                            }
+                        ],
+                    }
+                ], []
+
+        matches, diagnostics = VulnerabilityCorrelator().enrich_from_sources(
+            [first, second],
+            client=OneRecordClient(),
+        )
+
+        self.assertEqual({first.uid, second.uid}, {item.object_uid for item in matches})
+
     def test_enrichment_checks_all_candidates_by_default(self):
         inventory = [
             InventoryObject("s", "Installed Software", "software", f"Tool {index}", {"DisplayVersion": "1.0"}, "fixture")

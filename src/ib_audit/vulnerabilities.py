@@ -333,7 +333,7 @@ class VulnerabilityCorrelator:
         nvd_records: list[dict[str, Any]],
     ) -> list[VulnerabilityMatch]:
         matches: list[VulnerabilityMatch] = []
-        seen: set[tuple[str, str]] = set()
+        seen: set[tuple[str, str, str]] = set()
         for obj in inventory:
             haystack = self._inventory_text(obj)
             for record in kev_records:
@@ -342,7 +342,7 @@ class VulnerabilityCorrelator:
                 vulnerability_name = str(record.get("vulnerabilityName", ""))
                 cve = str(record.get("cveID", ""))
                 if cve and self._contains_product(obj, vendor, product, vulnerability_name):
-                    key = (cve, obj.title)
+                    key = (cve, obj.title, obj.uid)
                     if key not in seen:
                         seen.add(key)
                         matches.append(
@@ -371,7 +371,7 @@ class VulnerabilityCorrelator:
                     and self._matches_description(obj, description)
                 )
                 if cve and matches_record:
-                    key = (cve, obj.title)
+                    key = (cve, obj.title, obj.uid)
                     if key not in seen:
                         seen.add(key)
                         cvss, severity = self._cvss(record)
@@ -408,18 +408,19 @@ class VulnerabilityCorrelator:
         token.raise_if_cancelled()
         candidate_inventory = [obj for obj in inventory if obj.object_type in self.candidate_types]
         matches = self.match_inventory(candidate_inventory, kev, [])
-        keyword_objects = self._keyword_objects(candidate_inventory)
+        keyword_groups = self._keyword_groups(candidate_inventory)
         if max_nvd_queries is not None:
-            keyword_objects = keyword_objects[:max_nvd_queries]
-        for keyword, obj in keyword_objects:
+            keyword_groups = keyword_groups[:max_nvd_queries]
+        for keyword, objects in keyword_groups:
             token.raise_if_cancelled()
+            first = objects[0]
             if hasattr(client, "fetch_nvd_for_object"):
-                records, diag = client.fetch_nvd_for_object(obj)
+                records, diag = client.fetch_nvd_for_object(first)
             else:
                 records, diag = client.fetch_nvd_keyword(keyword)
             token.raise_if_cancelled()
             diagnostics.extend(diag)
-            matches.extend(self.match_inventory([obj], [], records))
+            matches.extend(self.match_inventory(objects, [], records))
         if self.fstec_client is not None:
             fstec_matches, fstec_diagnostics = self.fstec_client.match_inventory(
                 candidate_inventory,
@@ -429,10 +430,10 @@ class VulnerabilityCorrelator:
             matches.extend(fstec_matches)
             diagnostics.extend(fstec_diagnostics)
         deduped: list[VulnerabilityMatch] = []
-        seen: set[tuple[str, str, str]] = set()
+        seen: set[tuple[str, str, str, str]] = set()
         for match in sorted(matches, key=lambda item: (not item.kev, -(item.cvss or 0), item.cve, item.affected_title)):
             token.raise_if_cancelled()
-            key = (match.cve, match.affected_title, match.source)
+            key = (match.cve, match.affected_title, match.source, match.object_uid)
             if key not in seen:
                 seen.add(key)
                 deduped.append(match)
@@ -680,12 +681,15 @@ class VulnerabilityCorrelator:
 
     @staticmethod
     def _keywords(inventory: list[InventoryObject]) -> list[str]:
-        return [keyword for keyword, _obj in VulnerabilityCorrelator._keyword_objects(inventory)]
+        return [keyword for keyword, _objects in VulnerabilityCorrelator._keyword_groups(inventory)]
 
     @staticmethod
     def _keyword_objects(inventory: list[InventoryObject]) -> list[tuple[str, InventoryObject]]:
-        keywords: list[tuple[str, InventoryObject]] = []
-        seen: set[str] = set()
+        return [(keyword, objects[0]) for keyword, objects in VulnerabilityCorrelator._keyword_groups(inventory)]
+
+    @staticmethod
+    def _keyword_groups(inventory: list[InventoryObject]) -> list[tuple[str, list[InventoryObject]]]:
+        groups: dict[str, tuple[str, list[InventoryObject]]] = {}
         for obj in inventory:
             title = obj.title.strip()
             version = str(obj.fields.get("DisplayVersion") or obj.fields.get("Version") or "").strip()
@@ -694,7 +698,8 @@ class VulnerabilityCorrelator:
             if not version:
                 continue
             keyword = f"{title} {version}".strip()
-            if len(keyword) >= 4 and keyword.lower() not in seen:
-                seen.add(keyword.lower())
-                keywords.append((keyword, obj))
-        return keywords
+            if len(keyword) < 4:
+                continue
+            key = keyword.casefold()
+            groups.setdefault(key, (keyword, []))[1].append(obj)
+        return list(groups.values())
