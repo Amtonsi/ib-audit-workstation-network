@@ -20,6 +20,7 @@ from ib_audit.models import (
     InventoryObject,
     ObjectAssessment,
     RuleResult,
+    VulnerabilityMatch,
     WindowsProfile,
 )
 
@@ -146,6 +147,45 @@ class BatchHtmlReportBuilderTests(unittest.TestCase):
         self.assertIn("max-width:100%", reference_css)
         self.assertIn("overflow-wrap:anywhere", reference_css)
         self.assertIn("word-break:break-word", reference_css)
+
+    def test_batch_report_explains_cpe_applicability_in_common_and_host_cards(self):
+        result = make_result("PC-A", "critical")
+        rule = result.assessment.rule_results[0]
+        vulnerability = VulnerabilityMatch(
+            cve=rule.rule_id,
+            source="NVD",
+            severity="CRITICAL",
+            cvss=9.8,
+            kev=False,
+            affected_title="Example Tool",
+            evidence="NVD applicability potential: hardware matched; firmware version is unknown",
+            confidence="Medium",
+            remediation=rule.remediation,
+            references=rule.references,
+            object_uid=rule.object_uid,
+            applicability="potential",
+            cpe=(
+                "cpe:2.3:o:intel:xeon_e5620_firmware:"
+                "very-long-version-component-that-must-wrap-inside-cards:*:*:*:*:*:*:*"
+            ),
+        )
+        rule.evidence = vulnerability.evidence
+        rule.actual = vulnerability.evidence
+        result.assessment.vulnerabilities.append(vulnerability)
+        batch = BatchAssessment.create([Path("PC-A.html")], [result], [], "completed")
+
+        rendered = BatchHtmlReportBuilder().render(batch)
+
+        self.assertIn("Потенциальный риск", rendered)
+        self.assertIn("Версия прошивки не подтверждена", rendered)
+        self.assertIn("Установленная версия", rendered)
+        self.assertIn("1.0", rendered)
+        self.assertIn("cpe:2.3:o:intel:xeon_e5620_firmware", rendered)
+        self.assertIn("class='vulnerability-evidence'", rendered)
+        evidence_css = rendered.split(".vulnerability-evidence", 1)[1].split(".coverage-bar", 1)[0]
+        self.assertIn("min-width:0", evidence_css)
+        self.assertIn("overflow-wrap:anywhere", evidence_css)
+        self.assertIn("word-break:break-word", evidence_css)
 
     def test_host_navigation_opens_document_and_links_risks_to_inventory(self):
         result = make_result("INTEGRA-2", "critical")

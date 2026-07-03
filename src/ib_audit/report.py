@@ -58,6 +58,7 @@ class HtmlReportBuilder:
             categories[obj.category_name].append(obj)
         known = list(WINAUDIT_CATEGORY_ORDER)
         ordered = [*known, *sorted(name for name in categories if name not in set(known))]
+        inventory_by_uid = {obj.uid: obj for obj in inventory}
         assessment_by_uid = {item.object_uid: item for item in bundle.assessments}
         results_by_uid: dict[str, list[RuleResult]] = defaultdict(list)
         for result in bundle.rule_results:
@@ -72,7 +73,7 @@ class HtmlReportBuilder:
             "".join(f"<a href='#{self._anchor(item)}'>{html.escape(item)}</a>" for item in nav),
             "</aside><main>",
             self._summary(run, bundle),
-            self._findings(bundle),
+            self._findings(bundle, inventory_by_uid),
             self._remediation(bundle),
             self._coverage(bundle),
             self._object_filters(ordered, categories),
@@ -122,8 +123,13 @@ class HtmlReportBuilder:
             f"{snapshots}</section>"
         )
 
-    def _findings(self, bundle: AssessmentBundle) -> str:
+    def _findings(
+        self,
+        bundle: AssessmentBundle,
+        inventory_by_uid: dict[str, InventoryObject],
+    ) -> str:
         findings = [item for item in bundle.rule_results if item.status == "risk"]
+        vulnerability_index = self._vulnerability_index(bundle.vulnerabilities)
         items = ["<section id='s-уязвимости'><h2>Уязвимости</h2>",
                  "<div class='filters'><button onclick=\"filterFindings('all')\">Все</button>"
                  "<button onclick=\"filterFindings('vulnerability')\">CVE/БДУ</button>"
@@ -144,11 +150,17 @@ class HtmlReportBuilder:
         if not findings and not bundle.vulnerabilities:
             items.append("<p>Подтверждённые риски не найдены. Проверьте покрытие и недостаточные данные.</p>")
         for result in findings:
+            vulnerability = self._vulnerability_for_result(result, vulnerability_index)
+            evidence_details = self._vulnerability_evidence(
+                vulnerability,
+                inventory_by_uid.get(result.object_uid),
+            )
             items.append(
                 f"<div class='card finding' data-kind='{html.escape(result.kind, quote=True)}' "
                 f"data-severity='{html.escape(result.severity.lower(), quote=True)}'>"
                 f"<h3>{html.escape(result.rule_id)} — {html.escape(result.title)}</h3>"
                 f"<p>{html.escape(result.evidence)}</p>"
+                f"{evidence_details}"
                 f"<a href='#object-{html.escape(result.object_uid, quote=True)}'>Перейти к исходному объекту</a>"
                 f"<p><strong>Рекомендация:</strong> {html.escape(result.remediation)}</p>"
                 f"{self._reference_links(result.references)}</div>"
@@ -161,6 +173,7 @@ class HtmlReportBuilder:
                 f"<div class='card finding' data-kind='vulnerability' "
                 f"data-severity='{html.escape(vuln.severity.lower(), quote=True)}'><h3>{html.escape(vuln.cve)} — "
                 f"{html.escape(vuln.affected_title)}</h3><p>{html.escape(vuln.evidence)}</p>"
+                f"{self._vulnerability_evidence(vuln, inventory_by_uid.get(vuln.object_uid))}"
                 f"<p><strong>Устранение:</strong> {html.escape(vuln.remediation)}</p>"
                 f"{self._reference_links(vuln.references)}</div>"
             )
@@ -291,6 +304,85 @@ class HtmlReportBuilder:
         return " ".join(links)
 
     @staticmethod
+    def _vulnerability_index(
+        vulnerabilities: list[VulnerabilityMatch],
+    ) -> dict[tuple[str, str], VulnerabilityMatch]:
+        indexed: dict[tuple[str, str], VulnerabilityMatch] = {}
+        for item in vulnerabilities:
+            indexed[(item.object_uid, item.cve)] = item
+            indexed.setdefault(("", item.cve), item)
+        return indexed
+
+    @staticmethod
+    def _vulnerability_for_result(
+        result: RuleResult,
+        vulnerability_index: dict[tuple[str, str], VulnerabilityMatch],
+    ) -> VulnerabilityMatch | None:
+        return (
+            vulnerability_index.get((result.object_uid, result.rule_id))
+            or vulnerability_index.get(("", result.rule_id))
+        )
+
+    @classmethod
+    def _vulnerability_evidence(
+        cls,
+        vulnerability: VulnerabilityMatch | None,
+        inventory_object: InventoryObject | None,
+    ) -> str:
+        if vulnerability is None:
+            return ""
+        installed_version = cls._installed_version(inventory_object) or "не определена"
+        applicability = vulnerability.applicability.casefold() or "confirmed"
+        label = "Подтверждено" if applicability == "confirmed" else "Потенциальный риск"
+        cpe = (
+            f"<p><strong>CPE:</strong> <code>{html.escape(vulnerability.cpe)}</code></p>"
+            if vulnerability.cpe
+            else ""
+        )
+        return (
+            "<div class='vulnerability-evidence'>"
+            f"<span class='applicability-badge {html.escape(applicability, quote=True)}'>"
+            f"{html.escape(label)}</span>"
+            f"<p><strong>Установленная версия:</strong> {html.escape(installed_version)}</p>"
+            f"{cpe}"
+            f"<p><strong>Доказательство:</strong> {html.escape(vulnerability.evidence)}</p>"
+            f"{cls._human_vulnerability_reason(vulnerability)}</div>"
+        )
+
+    @staticmethod
+    def _installed_version(inventory_object: InventoryObject | None) -> str:
+        if inventory_object is None:
+            return ""
+        for key in (
+            "DisplayVersion",
+            "Version",
+            "FileVersion",
+            "Executable Version",
+            "Driver Version",
+            "DriverVersion",
+            "Firmware Revision",
+            "FirmwareVersion",
+            "BIOS Version",
+            "SMBIOSBIOSVersion",
+        ):
+            value = inventory_object.fields.get(key)
+            if value not in (None, ""):
+                return str(value)
+        return ""
+
+    @staticmethod
+    def _human_vulnerability_reason(vulnerability: VulnerabilityMatch) -> str:
+        evidence = vulnerability.evidence.casefold()
+        if (
+            vulnerability.applicability.casefold() == "potential"
+            and "firmware version is unknown" in evidence
+        ):
+            return "<p><strong>Причина:</strong> Версия прошивки не подтверждена</p>"
+        if vulnerability.applicability.casefold() == "potential":
+            return "<p><strong>Причина:</strong> Нужна ручная проверка применимости</p>"
+        return ""
+
+    @staticmethod
     def _is_exploit_reference(ref: str) -> bool:
         lowered = ref.casefold()
         return any(
@@ -335,7 +427,10 @@ h2{margin:0 0 12px}.meta{color:#4b5563}.kpis{display:grid;grid-template-columns:
 .status.risk{background:#fee2e2;color:#991b1b}.status.passed{background:#dcfce7;color:#166534}
 .status.insufficient_data{background:#ffedd5;color:#9a3412}.status.not_applicable{background:#e2e8f0;color:#475569}
 .warning,.unavailable{color:#9a3412}.rule{padding:8px;margin-top:7px;background:#f8fafc;border-radius:6px}
-.reference-link{display:inline-block;margin:4px 6px 0 0;color:#1d4ed8}.reference-link span{background:#fee2e2;color:#991b1b;border-radius:999px;padding:2px 6px;font-size:11px;font-weight:700}
+.vulnerability-evidence{margin:10px 0;padding:10px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;min-width:0;overflow-wrap:anywhere;word-break:break-word}
+.vulnerability-evidence p{margin:6px 0}.vulnerability-evidence code{white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+.applicability-badge{display:inline-block;border-radius:999px;padding:3px 8px;margin-bottom:4px;font-size:12px;font-weight:700;background:#eef2ff;color:#3730a3}.applicability-badge.confirmed{background:#dcfce7;color:#166534}.applicability-badge.potential{background:#ffedd5;color:#9a3412}
+.reference-link{display:inline-block;max-width:100%;min-width:0;margin:4px 6px 0 0;color:#1d4ed8;overflow-wrap:anywhere;word-break:break-word;white-space:normal}.reference-link span{background:#fee2e2;color:#991b1b;border-radius:999px;padding:2px 6px;font-size:11px;font-weight:700}
 .limit-note{background:#fff7ed;color:#9a3412;padding:8px}table{border-collapse:collapse;width:100%;table-layout:fixed}
 td,th{border:1px solid #e5e7eb;padding:8px;text-align:left;vertical-align:top;overflow-wrap:anywhere;word-break:break-word}.item-value td:first-child{width:260px;font-weight:600}
 .item-value td:last-child{overflow-wrap:anywhere;word-break:break-word}.filters{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.filters button,.filters select{max-width:100%;margin:0 6px 8px 0}footer{color:#6b7280;font-size:12px}

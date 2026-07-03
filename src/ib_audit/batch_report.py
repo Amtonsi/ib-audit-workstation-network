@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .batch import BatchAssessment, BatchDocumentResult, SEVERITY_ORDER
 from .category_catalog import WINAUDIT_CATEGORY_ORDER
-from .report import FIELD_LABELS
+from .report import FIELD_LABELS, HtmlReportBuilder
 
 
 STATUS_LABELS = {
@@ -166,10 +166,15 @@ class BatchHtmlReportBuilder:
             item.run.hostname: self._document_anchor(item)
             for item in batch.completed
         }
+        vulnerability_context = self._common_vulnerability_context(batch)
         for finding in batch.common_findings:
             hosts = "".join(
                 self._host_pill(host, anchors_by_host.get(host))
                 for host in finding.hostnames
+            )
+            vulnerability, inventory_object = vulnerability_context.get(
+                finding.key,
+                (None, None),
             )
             cards.append(
                 f"<article class='finding-card {html.escape(finding.severity)}' "
@@ -181,6 +186,7 @@ class BatchHtmlReportBuilder:
                 f"<span class='affected'>{len(finding.hostnames)} комп.</span></div>"
                 f"<h3>{html.escape(finding.title)}</h3>"
                 f"<p>{html.escape(finding.evidence)}</p>"
+                f"{HtmlReportBuilder._vulnerability_evidence(vulnerability, inventory_object)}"
                 f"<p><strong>Рекомендация:</strong> {html.escape(finding.remediation)}</p>"
                 f"{self._reference_links(finding.references)}"
                 f"<div class='host-list'>{hosts}</div></article>"
@@ -255,6 +261,10 @@ class BatchHtmlReportBuilder:
             for result in item.assessment.rule_results
             if result.status == "risk"
         ]
+        inventory_by_uid = {obj.uid: obj for obj in item.inventory}
+        vulnerability_index = HtmlReportBuilder._vulnerability_index(
+            item.assessment.vulnerabilities
+        )
         finding_entries = [
             (result, self._finding_anchor(anchor, result.rule_id, index))
             for index, result in enumerate(findings, 1)
@@ -269,6 +279,7 @@ class BatchHtmlReportBuilder:
             f"{html.escape(self._severity_label(result.severity))}</span>"
             f"<h4>{html.escape(result.rule_id)} · {html.escape(result.title)}</h4>"
             f"<p>{html.escape(result.evidence)}</p>"
+            f"{HtmlReportBuilder._vulnerability_evidence(HtmlReportBuilder._vulnerability_for_result(result, vulnerability_index), inventory_by_uid.get(result.object_uid))}"
             f"<p><strong>Рекомендация:</strong> {html.escape(result.remediation)}</p>"
             f"{self._reference_links(result.references)}"
             "</article>"
@@ -469,6 +480,21 @@ class BatchHtmlReportBuilder:
         )
 
     @staticmethod
+    def _common_vulnerability_context(batch: BatchAssessment) -> dict[str, tuple[object, object]]:
+        context: dict[str, tuple[object, object]] = {}
+        for document in batch.completed:
+            inventory_by_uid = {obj.uid: obj for obj in document.inventory}
+            for vulnerability in document.assessment.vulnerabilities:
+                context.setdefault(
+                    vulnerability.cve,
+                    (
+                        vulnerability,
+                        inventory_by_uid.get(vulnerability.object_uid),
+                    ),
+                )
+        return context
+
+    @staticmethod
     def _severity_label(severity: str) -> str:
         return {
             "critical": "Критический",
@@ -544,6 +570,7 @@ table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{padding:9px;b
 .finding-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:10px}.finding-card{border:1px solid var(--line);border-left:5px solid #64748b;border-radius:9px;padding:14px;min-width:0;overflow:hidden}.finding-card.critical,.host-finding.critical{border-left-color:var(--red)}.finding-card.high,.host-finding.high{border-left-color:var(--amber)}
 .finding-head{align-items:center;justify-content:flex-start}.affected{margin-left:auto;color:var(--muted);font-size:12px}.severity{background:#e2e8f0;color:#475569}.severity.critical{background:#fee2e2;color:#991b1b}.severity.high{background:#ffedd5;color:#9a3412}.severity.medium{background:#dbeafe;color:#1d4ed8}.host-list{display:flex;gap:5px;flex-wrap:wrap}
 .reference-list{margin:8px 0;display:flex;flex-direction:column;gap:6px;min-width:0}.reference-link{display:block;max-width:100%;min-width:0;color:#1d4ed8;overflow-wrap:anywhere;word-break:break-word;white-space:normal;line-height:1.35}.reference-link span{display:inline-block;background:#fee2e2;color:#991b1b;border-radius:999px;padding:2px 6px;margin-right:4px;font-size:11px;font-weight:700}
+.vulnerability-evidence{margin:10px 0;padding:10px;background:#f8fafb;border:1px solid #e4e9ec;border-radius:8px;min-width:0;overflow-wrap:anywhere;word-break:break-word}.vulnerability-evidence p{margin:6px 0}.vulnerability-evidence code{white-space:normal;overflow-wrap:anywhere;word-break:break-word}.applicability-badge{display:inline-block;border-radius:999px;padding:3px 8px;margin-bottom:4px;font-size:12px;font-weight:700;background:#eef2ff;color:#3730a3}.applicability-badge.confirmed{background:#dcfce7;color:#166534}.applicability-badge.potential{background:#ffedd5;color:#9a3412}
 .coverage-bar{height:12px;background:#e7edef;border-radius:999px;overflow:hidden;margin:14px 0}.coverage-bar span{display:block;height:100%;background:var(--teal);border-radius:999px}
 .document-section{padding:0;overflow:hidden}.document-section>details>summary{display:flex;justify-content:space-between;gap:15px;align-items:center;cursor:pointer;padding:17px 20px;background:#f8fafb}.document-section>details>summary::marker{color:var(--teal)}.document-section summary strong{font-size:18px}.document-section summary small{display:block;color:var(--muted);margin-top:3px}.summary-risk{color:var(--red);font-weight:700}.document-body{padding:4px 20px 20px}.document-tools{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.document-tools a{border:1px solid var(--line);border-radius:999px;padding:7px 10px;text-decoration:none;color:var(--teal);font-size:13px;font-weight:700}.document-tools a:hover{border-color:var(--teal);background:#ecfdf5}
 .host-findings{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:8px}.host-finding{border:1px solid var(--line);border-left:5px solid #64748b;border-radius:8px;padding:12px;min-width:0}.host-finding .severity{float:right}.category{border:1px solid var(--line);border-radius:8px;margin:8px 0}.category>summary{cursor:pointer;font-weight:700;padding:11px 13px;background:#f8fafb}.category>summary span{float:right;background:#e2e8f0;border-radius:999px;padding:2px 7px;font-size:11px}

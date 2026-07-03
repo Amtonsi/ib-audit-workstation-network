@@ -147,6 +147,105 @@ class HtmlReportBuilderTests(unittest.TestCase):
         self.assertIn("packetstormsecurity.com", html)
         self.assertIn("securityfocus.com/bid/46680", html)
 
+    def test_report_explains_confirmed_and_potential_cpe_evidence(self):
+        run = AuditRun.create("TEST-PC", True)
+        software = InventoryObject(
+            "s",
+            "Installed Software",
+            "software",
+            "SQL Server 2012 Common Files",
+            {"Vendor": "Microsoft", "Version": "11.1.3000.0"},
+            "fixture",
+        )
+        processor = InventoryObject(
+            "p",
+            "Processors",
+            "processor",
+            "Intel(R) Xeon(R) CPU E5620 @ 2.40GHz",
+            {"Manufacturer": "Intel", "Processor Description": "Intel Xeon E5620"},
+            "fixture",
+        )
+        confirmed = VulnerabilityMatch(
+            cve="CVE-2099-1200",
+            source="NVD",
+            severity="CRITICAL",
+            cvss=9.8,
+            kev=False,
+            affected_title=software.title,
+            evidence="NVD applicability confirmed: installed version is below fixed release",
+            confidence="High",
+            remediation="Install SQL Server update.",
+            references=["https://example.test/CVE-2099-1200"],
+            object_uid=software.uid,
+            applicability="confirmed",
+            cpe="cpe:2.3:a:microsoft:sql_server:11.1.3000.0:*:*:*:*:*:*:*",
+        )
+        potential = VulnerabilityMatch(
+            cve="CVE-2099-5600",
+            source="NVD",
+            severity="HIGH",
+            cvss=8.1,
+            kev=False,
+            affected_title=processor.title,
+            evidence="NVD applicability potential: hardware matched; firmware version is unknown",
+            confidence="Medium",
+            remediation="Check firmware advisory and apply vendor update if affected.",
+            references=["https://example.test/CVE-2099-5600"],
+            object_uid=processor.uid,
+            applicability="potential",
+            cpe="cpe:2.3:o:intel:xeon_e5620_firmware:*:*:*:*:*:*:*:*",
+        )
+        results = [
+            RuleResult(
+                confirmed.object_uid,
+                confirmed.cve,
+                confirmed.source,
+                "vulnerability",
+                "risk",
+                confirmed.severity,
+                f"{confirmed.cve}: {confirmed.affected_title}",
+                confirmed.evidence,
+                "vendor fixed version",
+                confirmed.evidence,
+                confirmed.confidence,
+                confirmed.remediation,
+                confirmed.references,
+            ),
+            RuleResult(
+                potential.object_uid,
+                potential.cve,
+                potential.source,
+                "vulnerability",
+                "risk",
+                potential.severity,
+                f"{potential.cve}: {potential.affected_title}",
+                potential.evidence,
+                "vendor fixed firmware",
+                potential.evidence,
+                potential.confidence,
+                potential.remediation,
+                potential.references,
+            ),
+        ]
+
+        html = HtmlReportBuilder().render(
+            run,
+            [software, processor],
+            [],
+            self._assessment([software, processor], results, [confirmed, potential]),
+        )
+
+        self.assertIn("Подтверждено", html)
+        self.assertIn("Потенциальный риск", html)
+        self.assertIn("Версия прошивки не подтверждена", html)
+        self.assertIn("Установленная версия", html)
+        self.assertIn("11.1.3000.0", html)
+        self.assertIn("не определена", html)
+        self.assertIn("cpe:2.3:a:microsoft:sql_server:11.1.3000.0", html)
+        self.assertIn("cpe:2.3:o:intel:xeon_e5620_firmware", html)
+        self.assertIn(".vulnerability-evidence", html)
+        self.assertIn("overflow-wrap:anywhere", html)
+
     def test_summary_separates_document_coverage_from_rule_checked_depth(self):
         run = AuditRun.create("TEST-PC", True)
         risk = InventoryObject("x", "Security", "uac_setting", "UAC", {"EnableLUA": "0"}, "fixture")
