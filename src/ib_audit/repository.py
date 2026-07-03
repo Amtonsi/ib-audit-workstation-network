@@ -17,6 +17,7 @@ from .models import (
     RuleResult,
     SourceDocument,
     SourceSnapshot,
+    VulnerabilityCoverage,
     VulnerabilityMatch,
 )
 
@@ -90,6 +91,19 @@ class SQLiteRepository:
                     references_json TEXT NOT NULL,
                     matched_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS vulnerability_coverage(
+                    run_id TEXT NOT NULL,
+                    object_uid TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    cpe_status TEXT NOT NULL,
+                    sources_checked_json TEXT NOT NULL,
+                    candidate_count INTEGER NOT NULL,
+                    evaluated_count INTEGER NOT NULL,
+                    truncated INTEGER NOT NULL,
+                    reason TEXT NOT NULL,
+                    trace_json TEXT NOT NULL,
+                    PRIMARY KEY(run_id, object_uid)
+                );
                 CREATE TABLE IF NOT EXISTS reports (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     run_id TEXT NOT NULL,
@@ -137,6 +151,8 @@ class SQLiteRepository:
             self._ensure_column(conn, "inventory_objects", "source_position", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "inventory_objects", "source_document_id", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "vulnerability_matches", "object_uid", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "vulnerability_matches", "applicability", "TEXT NOT NULL DEFAULT 'confirmed'")
+            self._ensure_column(conn, "vulnerability_matches", "cpe", "TEXT NOT NULL DEFAULT ''")
             rows = conn.execute(
                 "SELECT id FROM inventory_objects WHERE object_uid IS NULL OR object_uid = ''"
             ).fetchall()
@@ -219,8 +235,8 @@ class SQLiteRepository:
                 """
                 INSERT INTO vulnerability_matches
                 (run_id, cve, source, severity, cvss, kev, affected_title, evidence,
-                 confidence, remediation, references_json, matched_at, object_uid)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 confidence, remediation, references_json, matched_at, object_uid, applicability, cpe)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -237,10 +253,43 @@ class SQLiteRepository:
                         json.dumps(m.references, ensure_ascii=False),
                         m.matched_at,
                         m.object_uid,
+                        m.applicability,
+                        m.cpe,
                     )
                     for m in matches
             ],
         )
+
+    def save_vulnerability_coverage(
+        self,
+        run_id: str,
+        coverage: dict[str, VulnerabilityCoverage],
+    ) -> None:
+        with self._connection() as conn:
+            conn.execute("DELETE FROM vulnerability_coverage WHERE run_id = ?", (run_id,))
+            conn.executemany(
+                """
+                INSERT INTO vulnerability_coverage(
+                    run_id, object_uid, state, cpe_status, sources_checked_json,
+                    candidate_count, evaluated_count, truncated, reason, trace_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        run_id,
+                        item.object_uid,
+                        item.state,
+                        item.cpe_status,
+                        json.dumps(list(item.sources_checked), ensure_ascii=False),
+                        item.candidate_count,
+                        item.evaluated_count,
+                        int(item.truncated),
+                        item.reason,
+                        json.dumps(item.trace, ensure_ascii=False, sort_keys=True),
+                    )
+                    for item in coverage.values()
+                ],
+            )
 
     def save_source_document(self, run_id: str, document: SourceDocument) -> None:
         with self._connection() as conn:
@@ -355,6 +404,10 @@ class SQLiteRepository:
                 "SELECT * FROM collector_diagnostics WHERE run_id = ? ORDER BY id", (run_id,)
             ).fetchall()
             vuln_rows = conn.execute("SELECT * FROM vulnerability_matches WHERE run_id = ? ORDER BY id", (run_id,)).fetchall()
+            vulnerability_coverage_rows = conn.execute(
+                "SELECT * FROM vulnerability_coverage WHERE run_id = ? ORDER BY object_uid",
+                (run_id,),
+            ).fetchall()
             report_rows = conn.execute("SELECT * FROM reports WHERE run_id = ? ORDER BY id", (run_id,)).fetchall()
             document_rows = conn.execute(
                 "SELECT * FROM source_documents WHERE run_id = ? ORDER BY imported_at", (run_id,)
@@ -376,6 +429,10 @@ class SQLiteRepository:
             "inventory": [self._row_to_inventory(row) for row in inventory_rows],
             "diagnostics": [self._row_to_diagnostic(row) for row in diagnostic_rows],
             "vulnerabilities": [self._row_to_vulnerability(row) for row in vuln_rows],
+            "vulnerability_coverage": {
+                item.object_uid: item
+                for item in (self._row_to_vulnerability_coverage(row) for row in vulnerability_coverage_rows)
+            },
             "reports": [self._row_to_report(row) for row in report_rows],
             "source_documents": [self._row_to_source_document(row) for row in document_rows],
             "source_snapshots": [self._row_to_source_snapshot(row) for row in snapshot_rows],
@@ -439,6 +496,21 @@ class SQLiteRepository:
             references=self._loads(row["references_json"]),
             matched_at=row["matched_at"],
             object_uid=row["object_uid"],
+            applicability=row["applicability"],
+            cpe=row["cpe"],
+        )
+
+    def _row_to_vulnerability_coverage(self, row: sqlite3.Row) -> VulnerabilityCoverage:
+        return VulnerabilityCoverage(
+            object_uid=row["object_uid"],
+            state=row["state"],
+            cpe_status=row["cpe_status"],
+            sources_checked=tuple(self._loads(row["sources_checked_json"])),
+            candidate_count=row["candidate_count"],
+            evaluated_count=row["evaluated_count"],
+            truncated=bool(row["truncated"]),
+            reason=row["reason"],
+            trace=self._loads(row["trace_json"]),
         )
 
     def _row_to_report(self, row: sqlite3.Row) -> ReportRecord:

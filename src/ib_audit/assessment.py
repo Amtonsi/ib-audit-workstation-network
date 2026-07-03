@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 
 from .cancellation import CancellationToken
 from .models import (
@@ -10,6 +11,8 @@ from .models import (
     ObjectAssessment,
     RuleResult,
     SourceSnapshot,
+    VulnerabilityCoverage,
+    VulnerabilityCorrelationResult,
     VulnerabilityMatch,
     WindowsProfile,
 )
@@ -43,6 +46,7 @@ class AssessmentBundle:
     coverage: CoverageSummary
     diagnostics: list[CollectorDiagnostic]
     snapshots: list[SourceSnapshot]
+    vulnerability_coverage: dict[str, VulnerabilityCoverage] = field(default_factory=dict)
 
 
 class AssessmentService:
@@ -59,11 +63,20 @@ class AssessmentService:
         token.raise_if_cancelled()
         profile = detect_windows_profile(inventory)
         rule_results = RuleEngine(load_rules_for_profile(profile.role)).evaluate(inventory, profile)
-        vulnerabilities, diagnostics = self.correlator.enrich_from_sources(
+        correlation = self.correlator.enrich_from_sources(
             inventory,
             progress=progress,
             cancel_token=token,
         )
+        if isinstance(correlation, VulnerabilityCorrelationResult):
+            vulnerabilities = correlation.matches
+            diagnostics = correlation.diagnostics
+            vulnerability_coverage = correlation.coverage
+            snapshots = correlation.snapshots
+        else:
+            vulnerabilities, diagnostics = correlation
+            vulnerability_coverage = {}
+            snapshots = list(getattr(self.correlator, "used_snapshots", []))
         by_title = {item.title: item for item in inventory}
         matched_uids: set[str] = set()
         for match in vulnerabilities:
@@ -89,39 +102,55 @@ class AssessmentService:
             token.raise_if_cancelled()
             if obj.object_type not in candidate_types or obj.uid in matched_uids:
                 continue
-            identity = product_identity(obj)
-            complete_identity = bool(identity.product and identity.version)
+            coverage_item = vulnerability_coverage.get(obj.uid)
             if failed_sources:
                 status = "insufficient_data"
                 actual = "source unavailable"
+                evidence = f"{obj.category_name} / {obj.title}"
                 confidence = "low"
                 remediation = "Update vulnerability sources and verify product name/version."
-            elif complete_identity:
-                status = "passed"
-                actual = "no known match"
-                confidence = "medium"
-                remediation = "No action required."
+            elif coverage_item is not None:
+                if coverage_item.state == "complete":
+                    status = "passed"
+                    confidence = "high"
+                    remediation = "No action required."
+                else:
+                    status = "insufficient_data"
+                    confidence = "low"
+                    remediation = "Update vulnerability sources and verify product name/version."
+                actual = coverage_item.reason
+                evidence = json.dumps(coverage_item.trace, ensure_ascii=False, sort_keys=True)
             elif obj.object_type not in VERSION_REQUIRED_FOR_VULN_COVERAGE:
                 status = "not_applicable"
                 actual = "no reliable versioned product identity for automated CVE/BDU matching"
+                evidence = f"{obj.category_name} / {obj.title}"
                 confidence = "medium"
                 remediation = "Review manually only if this inventory item represents a separately updateable product."
             else:
-                status = "insufficient_data"
-                actual = "missing product version"
-                confidence = "low"
-                remediation = "Update vulnerability sources and verify product name/version."
+                identity = product_identity(obj)
+                complete_identity = bool(identity.product and identity.version)
+                if complete_identity:
+                    status = "passed"
+                    actual = "no known match"
+                    confidence = "medium"
+                    remediation = "No action required."
+                else:
+                    status = "insufficient_data"
+                    actual = "missing product version"
+                    confidence = "low"
+                    remediation = "Update vulnerability sources and verify product name/version."
+                evidence = f"{obj.category_name} / {obj.title}"
             rule_results.append(
                 RuleResult(
                     obj.uid, "VULN-COVERAGE", "1", "vulnerability", status, "info",
                     "Known-vulnerability coverage", actual,
                     "current sources and complete product identity",
-                    f"{obj.category_name} / {obj.title}", confidence, remediation,
+                    evidence, confidence, remediation,
                 )
             )
         token.raise_if_cancelled()
         assessments, coverage = aggregate_assessments(inventory, rule_results)
         return AssessmentBundle(
             profile, vulnerabilities, rule_results, assessments, coverage,
-            diagnostics, list(getattr(self.correlator, "used_snapshots", [])),
+            diagnostics, snapshots, vulnerability_coverage,
         )

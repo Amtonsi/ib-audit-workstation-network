@@ -17,6 +17,7 @@ from ib_audit.models import (
     ReportRecord,
     RuleResult,
     SourceDocument,
+    VulnerabilityCoverage,
     VulnerabilityMatch,
 )
 from ib_audit.repository import SQLiteRepository
@@ -121,6 +122,54 @@ class SQLiteRepositoryTests(unittest.TestCase):
         self.assertEqual("VULN-IDENTITY", bundle["rule_results"][0].rule_id)
         self.assertEqual("passed", bundle["assessments"][0].status)
         self.assertEqual(1, bundle["coverage"].total_objects)
+
+    def test_saves_vulnerability_applicability_and_coverage_trace(self):
+        repo = SQLiteRepository(self.db_path)
+        run = AuditRun.create("host", False)
+        obj = InventoryObject("p", "Processors", "processor", "Intel Xeon E5620", {}, "fixture")
+        match = VulnerabilityMatch(
+            cve="CVE-2099-8800",
+            source="NVD",
+            severity="HIGH",
+            cvss=8.1,
+            kev=False,
+            affected_title=obj.title,
+            evidence="hardware matched; firmware version is unknown",
+            confidence="Medium",
+            remediation="Apply vendor security updates.",
+            references=["https://vendor.example/CVE-2099-8800"],
+            object_uid=obj.uid,
+            applicability="potential",
+            cpe="cpe:2.3:o:intel:xeon_e5620_firmware:*:*:*:*:*:*:*:*",
+        )
+        coverage = {
+            obj.uid: VulnerabilityCoverage(
+                object_uid=obj.uid,
+                state="complete",
+                cpe_status="resolved",
+                sources_checked=("NVD",),
+                candidate_count=1,
+                evaluated_count=1,
+                truncated=False,
+                reason="CPE candidates evaluated",
+                trace={"candidates": ["cpe:2.3:h:intel:xeon:e5620:*:*:*:*:*:*:*"]},
+            )
+        }
+
+        repo.save_run(run)
+        repo.save_inventory_objects(run.id, [obj])
+        repo.save_vulnerability_matches(run.id, [match])
+        repo.save_vulnerability_coverage(run.id, coverage)
+
+        bundle = repo.load_run_bundle(run.id)
+
+        self.assertEqual("potential", bundle["vulnerabilities"][0].applicability)
+        self.assertEqual(match.cpe, bundle["vulnerabilities"][0].cpe)
+        self.assertEqual("resolved", bundle["vulnerability_coverage"][obj.uid].cpe_status)
+        self.assertEqual(
+            ["cpe:2.3:h:intel:xeon:e5620:*:*:*:*:*:*:*"],
+            bundle["vulnerability_coverage"][obj.uid].trace["candidates"],
+        )
 
     def test_migrates_legacy_inventory_table_without_losing_rows(self):
         legacy = Path(self.temp_dir) / "legacy.db"

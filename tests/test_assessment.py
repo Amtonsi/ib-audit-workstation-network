@@ -6,7 +6,13 @@ sys.path.insert(0, os.path.abspath("src"))
 
 from ib_audit.assessment import AssessmentService
 from ib_audit.cancellation import AuditCancelled, CancellationToken
-from ib_audit.models import CollectorDiagnostic, InventoryObject
+from ib_audit.models import (
+    CollectorDiagnostic,
+    InventoryObject,
+    VulnerabilityCoverage,
+    VulnerabilityCorrelationResult,
+    VulnerabilityMatch,
+)
 
 
 class FakeCorrelator:
@@ -22,6 +28,75 @@ class OnlineNoMatchCorrelator:
 
     def enrich_from_sources(self, inventory, progress=None, cancel_token=None):
         return [], []
+
+
+class UnresolvedCpeCorrelator:
+    used_snapshots = []
+    candidate_types = {"software"}
+
+    def enrich_from_sources(self, inventory, progress=None, cancel_token=None):
+        obj = inventory[0]
+        return VulnerabilityCorrelationResult(
+            [],
+            [],
+            {
+                obj.uid: VulnerabilityCoverage(
+                    obj.uid, "incomplete", "not_found", ("NVD",), 0, 0, False,
+                    "no CPE candidate passed the confidence threshold",
+                )
+            },
+        )
+
+
+class CompleteNoMatchCorrelator:
+    used_snapshots = []
+    candidate_types = {"software"}
+
+    def enrich_from_sources(self, inventory, progress=None, cancel_token=None):
+        obj = inventory[0]
+        return VulnerabilityCorrelationResult(
+            [],
+            [],
+            {
+                obj.uid: VulnerabilityCoverage(
+                    obj.uid, "complete", "resolved", ("NVD",), 1, 1, False,
+                    "CPE candidates evaluated",
+                )
+            },
+        )
+
+
+class PotentialHardwareCorrelator:
+    used_snapshots = []
+    candidate_types = {"processor"}
+
+    def enrich_from_sources(self, inventory, progress=None, cancel_token=None):
+        obj = inventory[0]
+        return VulnerabilityCorrelationResult(
+            [
+                VulnerabilityMatch(
+                    cve="CVE-2099-8800",
+                    source="NVD",
+                    severity="HIGH",
+                    cvss=8.1,
+                    kev=False,
+                    affected_title=obj.title,
+                    evidence="hardware matched; firmware version is unknown",
+                    confidence="Medium",
+                    remediation="Apply vendor security updates.",
+                    object_uid=obj.uid,
+                    applicability="potential",
+                    cpe="cpe:2.3:o:intel:xeon_e5620_firmware:*:*:*:*:*:*:*:*",
+                )
+            ],
+            [],
+            {
+                obj.uid: VulnerabilityCoverage(
+                    obj.uid, "complete", "resolved", ("NVD",), 1, 1, False,
+                    "CPE candidates evaluated",
+                )
+            },
+        )
 
 
 class AssessmentServiceTests(unittest.TestCase):
@@ -64,3 +139,39 @@ class AssessmentServiceTests(unittest.TestCase):
         self.assertEqual("missing product version", coverage_rule.actual)
         self.assertEqual("insufficient_data", bundle.assessments[0].status)
         self.assertEqual(1, bundle.coverage.insufficient_data)
+
+    def test_complete_identity_without_cpe_resolution_is_not_passed(self):
+        software = InventoryObject(
+            "s", "Installed Software", "software", "Example Tool",
+            {"Vendor": "Example", "Version": "1.0"},
+            "fixture",
+        )
+
+        bundle = AssessmentService(correlator=UnresolvedCpeCorrelator()).assess([software])
+
+        self.assertEqual("insufficient_data", bundle.assessments[0].status)
+        coverage_rule = next(item for item in bundle.rule_results if item.rule_id == "VULN-COVERAGE")
+        self.assertEqual("no CPE candidate passed the confidence threshold", coverage_rule.actual)
+
+    def test_complete_no_match_coverage_is_passed(self):
+        software = InventoryObject(
+            "s", "Installed Software", "software", "Example Tool",
+            {"Vendor": "Example", "Version": "1.0"},
+            "fixture",
+        )
+
+        bundle = AssessmentService(correlator=CompleteNoMatchCorrelator()).assess([software])
+
+        self.assertEqual("passed", bundle.assessments[0].status)
+
+    def test_potential_hardware_match_is_risk(self):
+        processor = InventoryObject(
+            "p", "Processors", "processor", "Intel(R) Xeon(R) CPU E5620 @ 2.40GHz",
+            {"Manufacturer": "Intel(R) Corporation"},
+            "fixture",
+        )
+
+        bundle = AssessmentService(correlator=PotentialHardwareCorrelator()).assess([processor])
+
+        self.assertEqual("risk", bundle.assessments[0].status)
+        self.assertEqual("potential", bundle.vulnerabilities[0].applicability)

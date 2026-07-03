@@ -149,6 +149,7 @@ def run_audit(
     diagnostics.extend(assessment.diagnostics)
     repo.save_diagnostics(run.id, assessment.diagnostics)
     repo.save_vulnerability_matches(run.id, assessment.vulnerabilities)
+    repo.save_vulnerability_coverage(run.id, assessment.vulnerability_coverage)
     repo.save_assessment_bundle(run.id, assessment.rule_results, assessment.assessments, assessment.coverage)
     for snapshot in assessment.snapshots:
         repo.save_source_snapshot(run.id, snapshot)
@@ -218,6 +219,7 @@ def _analyze_imported_document(
         diagnostics = [*imported.diagnostics, *assessment.diagnostics]
         repo.save_diagnostics(run.id, diagnostics)
         repo.save_vulnerability_matches(run.id, vulnerabilities)
+        repo.save_vulnerability_coverage(run.id, assessment.vulnerability_coverage)
         repo.save_assessment_bundle(run.id, assessment.rule_results, assessment.assessments, assessment.coverage)
         for snapshot in assessment.snapshots:
             repo.save_source_snapshot(run.id, snapshot)
