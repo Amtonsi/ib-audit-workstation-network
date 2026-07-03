@@ -74,9 +74,39 @@ class VulnerabilityMatch:
     references: list[str] = field(default_factory=list)
     matched_at: str = field(default_factory=utc_now)
     object_uid: str = ""
+    applicability: str = "confirmed"
+    cpe: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass
+class VulnerabilityCoverage:
+    object_uid: str
+    state: str
+    cpe_status: str
+    sources_checked: tuple[str, ...]
+    candidate_count: int
+    evaluated_count: int
+    truncated: bool
+    reason: str
+    trace: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class VulnerabilityCorrelationResult:
+    matches: list[VulnerabilityMatch]
+    diagnostics: list[CollectorDiagnostic]
+    coverage: dict[str, VulnerabilityCoverage] = field(default_factory=dict)
+    snapshots: list[SourceSnapshot] = field(default_factory=list)
+
+    def __iter__(self):
+        yield self.matches
+        yield self.diagnostics
 
 
 @dataclass

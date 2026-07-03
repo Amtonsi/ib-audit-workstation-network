@@ -528,6 +528,194 @@ class VulnerabilityCorrelatorTests(unittest.TestCase):
         self.assertIn("https://exploit.example/CVE-2099-9001", matches[0].references)
         self.assertFalse(any(item.severity == "warning" for item in diagnostics), diagnostics)
 
+    def test_cpe_correlation_returns_coverage_and_duplicate_uid_matches(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            db_path = self._build_cpe_enabled_database(
+                root,
+                cpes=[
+                    ("SQL-1", "cpe:2.3:a:microsoft:sql_server:*:*:*:*:*:*:*:*", "Microsoft SQL Server"),
+                ],
+                cves=[
+                    self._cve(
+                        "CVE-2099-1200",
+                        "cpe:2.3:a:microsoft:sql_server:*:*:*:*:*:*:*:*",
+                        version_end_excluding="11.2",
+                    )
+                ],
+            )
+            first = InventoryObject(
+                "s", "Installed Software", "software", "SQL Server 2012 Common Files",
+                {"Vendor": "Microsoft", "Version": "11.1.3000.0", "Software ID": "{ONE}"},
+                "fixture",
+            )
+            second = InventoryObject(
+                "s", "Installed Software", "software", "SQL Server 2012 Common Files",
+                {"Vendor": "Microsoft", "Version": "11.1.3000.0", "Software ID": "{TWO}"},
+                "fixture",
+            )
+
+            result = VulnerabilityCorrelator(
+                source_client=VulnerabilityDatabaseSourceClient(db_path)
+            ).enrich_from_sources([first, second])
+
+        self.assertEqual({first.uid, second.uid}, {item.object_uid for item in result.matches})
+        self.assertEqual({"confirmed"}, {item.applicability for item in result.matches})
+        self.assertEqual("complete", result.coverage[first.uid].state)
+        self.assertEqual("resolved", result.coverage[first.uid].cpe_status)
+
+    def test_cpe_correlation_marks_fixed_version_complete_without_match(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            db_path = self._build_cpe_enabled_database(
+                root,
+                cpes=[
+                    ("SQL-1", "cpe:2.3:a:microsoft:sql_server:*:*:*:*:*:*:*:*", "Microsoft SQL Server"),
+                ],
+                cves=[
+                    self._cve(
+                        "CVE-2099-1200",
+                        "cpe:2.3:a:microsoft:sql_server:*:*:*:*:*:*:*:*",
+                        version_end_excluding="11.2",
+                    )
+                ],
+            )
+            fixed = InventoryObject(
+                "s", "Installed Software", "software", "SQL Server 2012 Common Files",
+                {"Vendor": "Microsoft", "Version": "11.2.0.0"},
+                "fixture",
+            )
+
+            result = VulnerabilityCorrelator(
+                source_client=VulnerabilityDatabaseSourceClient(db_path)
+            ).enrich_from_sources([fixed])
+
+        self.assertEqual([], result.matches)
+        self.assertEqual("complete", result.coverage[fixed.uid].state)
+
+    def test_cpe_correlation_marks_unknown_hardware_firmware_as_potential(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            db_path = self._build_cpe_enabled_database(
+                root,
+                cpes=[
+                    ("CPU-1", "cpe:2.3:h:intel:xeon:e5620:*:*:*:*:*:*:*", "Intel Xeon E5620"),
+                ],
+                cves=[
+                    {
+                        "id": "CVE-2099-8800",
+                        "descriptions": [{"lang": "en", "value": "Intel Xeon E5620 firmware before 2.0 is vulnerable."}],
+                        "metrics": {"cvssMetricV31": [{"cvssData": {"baseScore": 8.1, "baseSeverity": "HIGH"}}]},
+                        "references": [{"url": "https://vendor.example/CVE-2099-8800"}],
+                        "configurations": [
+                            {
+                                "operator": "AND",
+                                "nodes": [
+                                    {"cpeMatch": [{
+                                        "vulnerable": False,
+                                        "criteria": "cpe:2.3:h:intel:xeon:e5620:*:*:*:*:*:*:*",
+                                    }]},
+                                    {"cpeMatch": [{
+                                        "vulnerable": True,
+                                        "criteria": "cpe:2.3:o:intel:xeon_e5620_firmware:*:*:*:*:*:*:*:*",
+                                        "versionEndExcluding": "2.0",
+                                    }]},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            )
+            processor = InventoryObject(
+                "p", "Processors", "processor", "Intel(R) Xeon(R) CPU E5620 @ 2.40GHz",
+                {"Manufacturer": "Intel(R) Corporation"},
+                "fixture",
+            )
+
+            result = VulnerabilityCorrelator(
+                source_client=VulnerabilityDatabaseSourceClient(db_path)
+            ).enrich_from_sources([processor])
+
+        self.assertEqual(["potential"], [item.applicability for item in result.matches])
+        self.assertEqual("complete", result.coverage[processor.uid].state)
+
+    def test_cpe_correlation_marks_unresolved_generic_processor_incomplete(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            db_path = self._build_cpe_enabled_database(root, cpes=[], cves=[])
+            processor = InventoryObject(
+                "p", "Processors", "processor", "Processor",
+                {"Manufacturer": "Intel(R) Corporation"},
+                "fixture",
+            )
+
+            result = VulnerabilityCorrelator(
+                source_client=VulnerabilityDatabaseSourceClient(db_path)
+            ).enrich_from_sources([processor])
+
+        self.assertEqual([], result.matches)
+        self.assertEqual("incomplete", result.coverage[processor.uid].state)
+        self.assertEqual("not_found", result.coverage[processor.uid].cpe_status)
+
+    def _build_cpe_enabled_database(
+        self,
+        root: Path,
+        cpes: list[tuple[str, str, str]],
+        cves: list[dict],
+    ) -> Path:
+        db_path = root / "vulnerability_sources.db"
+        nvd_path = root / "nvdcve-2.0-2099.json.gz"
+        nvd_path.write_bytes(
+            gzip.compress(json.dumps({"vulnerabilities": [{"cve": item} for item in cves]}).encode("utf-8"))
+        )
+        VulnerabilityDatabaseBuilder(root / "snapshots", db_path).build_database(
+            [DownloadedSource("nvd", "2099", "https://nvd.test/2099", nvd_path)]
+        )
+        con = sqlite3.connect(db_path)
+        try:
+            con.execute(
+                "insert into cpe_catalog_generations(id,created_at,status) values(1,'2099-01-01T00:00:00+00:00','active')"
+            )
+            con.execute(
+                """
+                insert into source_sync_state(source,active_generation_id,sha256,size_bytes,updated_at)
+                values('nvd-cpe-catalog',1,'fixture',0,'2099-01-01T00:00:00+00:00')
+                """
+            )
+            for cpe_name_id, cpe_name, title in cpes:
+                parts = cpe_name.split(":")
+                con.execute(
+                    """
+                    insert into nvd_cpe_names(
+                        generation_id,cpe_name_id,cpe_name,part,vendor,product,version,
+                        update_value,deprecated,title
+                    ) values(?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (1, cpe_name_id, cpe_name, parts[2], parts[3], parts[4], parts[5], parts[6], 0, title),
+                )
+            con.commit()
+        finally:
+            con.close()
+        return db_path
+
+    @staticmethod
+    def _cve(
+        cve_id: str,
+        criteria: str,
+        *,
+        version_end_excluding: str = "",
+    ) -> dict:
+        cpe_match = {"vulnerable": True, "criteria": criteria}
+        if version_end_excluding:
+            cpe_match["versionEndExcluding"] = version_end_excluding
+        return {
+            "id": cve_id,
+            "descriptions": [{"lang": "en", "value": f"{criteria} is vulnerable."}],
+            "metrics": {"cvssMetricV31": [{"cvssData": {"baseScore": 7.8, "baseSeverity": "HIGH"}}]},
+            "references": [{"url": f"https://example.test/{cve_id}"}],
+            "configurations": [{"nodes": [{"cpeMatch": [cpe_match]}]}],
+        }
+
 
 if __name__ == "__main__":
     unittest.main()

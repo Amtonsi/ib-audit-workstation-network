@@ -10,8 +10,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .applicability import CpeApplicabilityEvaluator
 from .cancellation import CancellationToken
-from .models import CollectorDiagnostic, InventoryObject, SourceSnapshot, VulnerabilityMatch
+from .cpe_catalog import CpeCandidate, CpeCatalog, CpeResolution
+from .identity import InventoryIdentity, InventoryIdentityResolver
+from .models import (
+    CollectorDiagnostic,
+    InventoryObject,
+    SourceSnapshot,
+    VulnerabilityCoverage,
+    VulnerabilityCorrelationResult,
+    VulnerabilityMatch,
+)
 from .normalization import product_identity
 from .source_cache import SnapshotCache
 from .vulnerability_database import is_vulnerability_database
@@ -91,6 +101,9 @@ class VulnerabilityDatabaseSourceClient:
         if not is_vulnerability_database(self.db_path):
             raise ValueError(f"Not a vulnerability database: {self.db_path}")
 
+    def resolve_cpe(self, identity: InventoryIdentity) -> CpeResolution:
+        return CpeCatalog(self.db_path).resolve(identity)
+
     def fetch_cisa_kev(self) -> tuple[list[dict[str, Any]], list[CollectorDiagnostic]]:
         try:
             rows = self._fetch_rows("select raw_json from cisa_kev")
@@ -123,6 +136,50 @@ class VulnerabilityDatabaseSourceClient:
                 terms.append(term)
         parts = self._cpe_parts_for_object(obj.object_type)
         return self._fetch_nvd_by_terms(obj.title, terms[:2], parts, limit=limit)
+
+    def fetch_nvd_for_candidates(
+        self,
+        candidates: tuple[CpeCandidate, ...],
+    ) -> tuple[list[dict[str, Any]], bool, list[CollectorDiagnostic]]:
+        records: dict[str, dict[str, Any]] = {}
+        try:
+            self._record_snapshot()
+            for candidate in candidates:
+                rows = self._fetch_rows(
+                    """
+                    select distinct c.cve_id, c.raw_json
+                    from nvd_cves c
+                    join nvd_affected_products p on p.cve_id = c.cve_id
+                    where p.part = ? and p.vendor = ? and p.product = ?
+                    order by coalesce(c.cvss, 0) desc, c.cve_id
+                    """,
+                    (
+                        candidate.cpe.part,
+                        candidate.cpe.vendor.replace("_", " "),
+                        candidate.cpe.product.replace("_", " "),
+                    ),
+                )
+                for row in rows:
+                    record = json.loads(str(row["raw_json"]))
+                    record["_ib_match_requires_configuration"] = True
+                    records[str(row["cve_id"])] = record
+            return list(records.values()), False, [
+                CollectorDiagnostic(
+                    "vulnerability_sources",
+                    "info",
+                    f"database CPE candidates: {len(candidates)}, CVE: {len(records)}",
+                    str(self.db_path),
+                )
+            ]
+        except Exception as exc:
+            return [], False, [
+                CollectorDiagnostic(
+                    "vulnerability_sources",
+                    "warning",
+                    f"NVD database unavailable for CPE candidates: {exc}",
+                    str(self.db_path),
+                )
+            ]
 
     def _fetch_nvd_by_terms(
         self,
@@ -400,7 +457,7 @@ class VulnerabilityCorrelator:
         max_matches: int | None = None,
         progress=None,
         cancel_token: CancellationToken | None = None,
-    ) -> tuple[list[VulnerabilityMatch], list[CollectorDiagnostic]]:
+    ) -> VulnerabilityCorrelationResult:
         token = cancel_token or CancellationToken()
         token.raise_if_cancelled()
         client = client or self.source_client or VulnerabilitySourceClient()
@@ -408,7 +465,20 @@ class VulnerabilityCorrelator:
         token.raise_if_cancelled()
         candidate_inventory = [obj for obj in inventory if obj.object_type in self.candidate_types]
         matches = self.match_inventory(candidate_inventory, kev, [])
-        keyword_groups = self._keyword_groups(candidate_inventory)
+        coverage: dict[str, VulnerabilityCoverage] = {}
+        cpe_handled_uids: set[str] = set()
+        cpe_result = self._enrich_from_cpe_sources(candidate_inventory, client, token)
+        if cpe_result is not None:
+            matches.extend(cpe_result.matches)
+            diagnostics.extend(cpe_result.diagnostics)
+            coverage.update(cpe_result.coverage)
+            cpe_handled_uids = set(cpe_result.coverage)
+
+        keyword_groups = [
+            (keyword, objects)
+            for keyword, objects in self._keyword_groups(candidate_inventory)
+            if not all(obj.uid in cpe_handled_uids for obj in objects)
+        ]
         if max_nvd_queries is not None:
             keyword_groups = keyword_groups[:max_nvd_queries]
         for keyword, objects in keyword_groups:
@@ -448,7 +518,129 @@ class VulnerabilityCorrelator:
                 )
                 break
         self.used_snapshots = list(getattr(client, "used_snapshots", []))
-        return deduped, diagnostics
+        return VulnerabilityCorrelationResult(
+            deduped,
+            diagnostics,
+            coverage,
+            list(self.used_snapshots),
+        )
+
+    def _enrich_from_cpe_sources(
+        self,
+        inventory: list[InventoryObject],
+        client: object,
+        token: CancellationToken,
+    ) -> VulnerabilityCorrelationResult | None:
+        if not (hasattr(client, "resolve_cpe") and hasattr(client, "fetch_nvd_for_candidates")):
+            return None
+        if not inventory:
+            return VulnerabilityCorrelationResult([], [], {}, [])
+        resolver = InventoryIdentityResolver()
+        identities_by_uid = {obj.uid: resolver.resolve(obj, inventory) for obj in inventory}
+        host_identities = list(identities_by_uid.values())
+        grouped: dict[
+            tuple[str, str, str, str, tuple[str, ...]],
+            list[tuple[InventoryObject, InventoryIdentity]],
+        ] = {}
+        for obj in inventory:
+            identity = identities_by_uid[obj.uid]
+            grouped.setdefault(identity.group_key, []).append((obj, identity))
+
+        evaluator = CpeApplicabilityEvaluator()
+        matches: list[VulnerabilityMatch] = []
+        diagnostics: list[CollectorDiagnostic] = []
+        coverage: dict[str, VulnerabilityCoverage] = {}
+        for group in grouped.values():
+            token.raise_if_cancelled()
+            representative = group[0][1]
+            resolution = client.resolve_cpe(representative)
+            if resolution.status == "catalog_unavailable":
+                return None
+            group_uids = [obj.uid for obj, _identity in group]
+            if resolution.status != "resolved":
+                for uid in group_uids:
+                    coverage[uid] = self._coverage(
+                        uid,
+                        "incomplete",
+                        resolution.status,
+                        candidate_count=len(resolution.candidates),
+                        evaluated_count=0,
+                        truncated=False,
+                        reason=resolution.reason,
+                        trace={"identity": representative.group_key},
+                    )
+                continue
+
+            records, truncated, source_diagnostics = client.fetch_nvd_for_candidates(resolution.candidates)
+            diagnostics.extend(source_diagnostics)
+            group_matches: list[VulnerabilityMatch] = []
+            for record in records:
+                token.raise_if_cancelled()
+                decision = evaluator.evaluate(
+                    list(record.get("configurations", [])),
+                    target=representative,
+                    host_identities=host_identities,
+                )
+                if decision.state not in {"confirmed", "potential"}:
+                    continue
+                cvss, severity = self._cvss(record)
+                cpe = decision.criteria[0] if decision.criteria else resolution.candidates[0].cpe.uri
+                for obj, _identity in group:
+                    group_matches.append(
+                        VulnerabilityMatch(
+                            cve=str(record.get("id", "")),
+                            source="NVD",
+                            severity=severity,
+                            cvss=cvss,
+                            kev=False,
+                            affected_title=obj.title,
+                            evidence=f"NVD applicability {decision.state}: {decision.reason}",
+                            confidence="High" if decision.state == "confirmed" else "Medium",
+                            remediation=self._generic_remediation(obj),
+                            references=self._references(record),
+                            object_uid=obj.uid,
+                            applicability=decision.state,
+                            cpe=cpe,
+                        )
+                    )
+            matches.extend(group_matches)
+            for uid in group_uids:
+                coverage[uid] = self._coverage(
+                    uid,
+                    "incomplete" if truncated else "complete",
+                    resolution.status,
+                    candidate_count=len(resolution.candidates),
+                    evaluated_count=len(records),
+                    truncated=truncated,
+                    reason="query truncated" if truncated else "CPE candidates evaluated",
+                    trace={
+                        "candidates": [candidate.cpe.uri for candidate in resolution.candidates],
+                    },
+                )
+        return VulnerabilityCorrelationResult(matches, diagnostics, coverage, list(getattr(client, "used_snapshots", [])))
+
+    @staticmethod
+    def _coverage(
+        object_uid: str,
+        state: str,
+        cpe_status: str,
+        candidate_count: int,
+        evaluated_count: int,
+        truncated: bool,
+        reason: str,
+        trace: dict[str, Any] | None = None,
+    ) -> VulnerabilityCoverage:
+        return VulnerabilityCoverage(
+            object_uid=object_uid,
+            state=state,
+            cpe_status=cpe_status,
+            sources_checked=("NVD",),
+            candidate_count=candidate_count,
+            evaluated_count=evaluated_count,
+            truncated=truncated,
+            reason=reason,
+            trace=trace or {},
+        )
 
     @staticmethod
     def _inventory_text(obj: InventoryObject) -> str:
