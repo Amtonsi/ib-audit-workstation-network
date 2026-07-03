@@ -9,8 +9,8 @@ sys.path.insert(0, os.path.abspath("src"))
 
 from ib_audit.gui_tk import (
     AuditWindow, SOURCE_LABELS, format_result_message, format_source_status,
-    presentation_for, progress_value_for_message, responsive_layout_for_width,
-    window_bounds_for_screen,
+    format_database_update_status, presentation_for, progress_status_for_message,
+    progress_value_for_message, responsive_layout_for_width, window_bounds_for_screen,
 )
 from ib_audit.batch import BatchProgress
 from ib_audit.cancellation import CancellationToken
@@ -177,6 +177,29 @@ class AuditWindowReportImportTests(unittest.TestCase):
         self.assertEqual(95, progress_value_for_message("ФСТЭК БДУ: онлайн-поиск 100/100: windows", 85))
         self.assertEqual(92, progress_value_for_message("ФСТЭК БДУ: онлайн-поиск 50/100: windows", 92))
         self.assertEqual(85, progress_value_for_message("ФСТЭК БДУ: онлайн-поиск 50/0: windows", 85))
+
+    def test_cpe_update_progress_and_status_are_visible(self):
+        status = format_database_update_status({
+            "db_path": "C:/outputs/vulnerability_sources.db",
+            "stats": {
+                "source_files": 7,
+                "reused_sources": 2,
+                "updated_sources": 5,
+                "cpe_names": 123,
+                "cpe_match_criteria": 45,
+                "active_cpe_generation": 9,
+            },
+        })
+
+        self.assertIn("CPE Dictionary=123", status)
+        self.assertIn("CPE Match=45", status)
+        self.assertIn("CPE generation=9", status)
+        self.assertEqual("Прогресс: обновление CPE Dictionary", progress_status_for_message("Загрузка CPE Dictionary"))
+        self.assertEqual("Прогресс: обновление CPE Match", progress_status_for_message("Загрузка CPE Match"))
+        self.assertEqual("Прогресс: индексирование CPE", progress_status_for_message("Индексирование CPE"))
+        self.assertEqual(30, progress_value_for_message("Загрузка CPE Dictionary", 0))
+        self.assertEqual(50, progress_value_for_message("Загрузка CPE Match", 30))
+        self.assertEqual(75, progress_value_for_message("Индексирование CPE", 50))
 
     def test_drain_messages_updates_determinate_progress(self):
         window = self._window()
@@ -456,16 +479,24 @@ class AuditWindowReportImportTests(unittest.TestCase):
         update_database.return_value = {
             "db_path": Path("C:/project/vulnerability-database/vulnerability_sources.db"),
             "snapshot_dir": Path("C:/project/vulnerability-database/snapshots"),
-            "stats": {"reused_sources": 1, "updated_sources": 2, "source_files": 3},
+            "stats": {
+                "reused_sources": 1,
+                "updated_sources": 2,
+                "source_files": 3,
+                "cpe_names": 4,
+                "cpe_match_criteria": 5,
+                "active_cpe_generation": 6,
+            },
         }
 
         window._run_source_update(token)
 
         update_database.assert_called_once()
         self.assertEqual(Path("C:/outputs/vulnerability-database"), update_database.call_args.kwargs["output_dir"])
+        self.assertTrue(update_database.call_args.kwargs["include_cpe"])
         self.assertIs(token, update_database.call_args.kwargs["cancel_token"])
         messages = list(window.messages.queue)
-        self.assertTrue(any(message.startswith("__SOURCES__:") for message in messages))
+        self.assertTrue(any("CPE Dictionary=4" in message for message in messages))
         self.assertIn("__STATUS__:Базы обновлены", messages)
 
     @patch("ib_audit.gui_tk.threading.Thread")

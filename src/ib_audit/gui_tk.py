@@ -203,7 +203,10 @@ def format_database_update_status(result: dict[str, object]) -> str:
         f"БД уязвимостей: {db_path.name} · "
         f"источников={stats.get('source_files', 0)} · "
         f"переиспользовано={stats.get('reused_sources', 0)} · "
-        f"обновлено={stats.get('updated_sources', 0)}"
+        f"обновлено={stats.get('updated_sources', 0)} · "
+        f"CPE Dictionary={stats.get('cpe_names', 0)} · "
+        f"CPE Match={stats.get('cpe_match_criteria', 0)} · "
+        f"CPE generation={stats.get('active_cpe_generation', 0)}"
     )
 
 
@@ -234,6 +237,12 @@ def progress_status_for_message(message: str) -> str | None:
         return "Прогресс: запуск проверки"
     if "updating cisa kev catalog" in lowered:
         return "Прогресс: обновление CISA KEV"
+    if "cpe dictionary" in lowered:
+        return "Прогресс: обновление CPE Dictionary"
+    if "cpe match" in lowered:
+        return "Прогресс: обновление CPE Match"
+    if "cpe" in lowered and ("индекс" in lowered or "index" in lowered or "активац" in lowered or "building" in lowered):
+        return "Прогресс: индексирование CPE"
     if "audit completed" in lowered:
         return "Прогресс: формирование отчёта"
     if "nvd" in lowered:
@@ -263,6 +272,12 @@ def progress_value_for_message(message: str, current: int) -> int:
         return max(current, 5)
     if "updating cisa kev catalog" in lowered:
         return max(current, 20)
+    if "cpe dictionary" in lowered:
+        return max(current, 30)
+    if "cpe match" in lowered:
+        return max(current, 50)
+    if "cpe" in lowered and ("индекс" in lowered or "index" in lowered or "активац" in lowered or "building" in lowered):
+        return max(current, 75)
     if "running collector:" in lowered:
         return min(75, max(20, current + 15))
     if "audit completed" in lowered:
@@ -823,6 +838,7 @@ class AuditWindow:
                 output_dir=Path(self.output_dir.get()) / "vulnerability-database",
                 project_root=Path.cwd(),
                 progress=self.messages.put,
+                include_cpe=True,
                 cancel_token=cancel_token,
             )
             self.messages.put("__SOURCES__:" + format_database_update_status(result))

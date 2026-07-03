@@ -1,6 +1,10 @@
 import os
+import contextlib
+import importlib.util
+import io
 import sys
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, os.path.abspath("src"))
@@ -67,6 +71,45 @@ class CommandRunnerTests(unittest.TestCase):
         result = run_command(command)
 
         self.assertEqual(result.stdout, "\u0422\u0435\u0441\u0442 UTF-8")
+
+    def test_update_database_script_enables_cpe_and_prints_stats(self):
+        module = self._load_update_database_script()
+        result = {
+            "db_path": Path("C:/outputs/vulnerability_sources.db"),
+            "snapshot_dir": Path("C:/outputs/snapshots"),
+            "stats": {
+                "mode": "incremental",
+                "reused_sources": 1,
+                "updated_sources": 2,
+                "source_files": 3,
+                "cpe_names": 4,
+                "cpe_match_criteria": 5,
+                "active_cpe_generation": 6,
+            },
+        }
+        stdout = io.StringIO()
+        argv = ["update_vulnerability_database.py", "--output", "C:/outputs"]
+
+        with patch.object(module, "update_vulnerability_database", return_value=result) as update_database, \
+                patch.object(sys, "argv", argv), \
+                contextlib.redirect_stdout(stdout):
+            exit_code = module.main()
+
+        self.assertEqual(0, exit_code)
+        self.assertTrue(update_database.call_args.kwargs["include_cpe"])
+        output = stdout.getvalue()
+        self.assertIn("CPE Dictionary: 4", output)
+        self.assertIn("CPE Match: 5", output)
+        self.assertIn("Active CPE generation: 6", output)
+
+    @staticmethod
+    def _load_update_database_script():
+        script = Path("scripts/update_vulnerability_database.py").resolve()
+        spec = importlib.util.spec_from_file_location("update_vulnerability_database_script", script)
+        module = importlib.util.module_from_spec(spec)
+        assert spec is not None and spec.loader is not None
+        spec.loader.exec_module(module)
+        return module
 
 
 if __name__ == "__main__":
