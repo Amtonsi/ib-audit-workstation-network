@@ -657,6 +657,34 @@ class VulnerabilityCorrelatorTests(unittest.TestCase):
         self.assertEqual("incomplete", result.coverage[processor.uid].state)
         self.assertEqual("not_found", result.coverage[processor.uid].cpe_status)
 
+    def test_ambiguous_hardware_cpe_candidates_are_still_evaluated(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cpe = "cpe:2.3:h:intel:xeon:e5620:*:*:*:*:*:*:*"
+            db_path = self._build_cpe_enabled_database(
+                root,
+                cpes=[
+                    ("CPU-1", cpe, "Intel Xeon E5620"),
+                    ("CPU-2", "cpe:2.3:h:intel:xeon_processor:e5620:*:*:*:*:*:*:*", "Intel Xeon Processor E5620"),
+                ],
+                cves=[self._cve("CVE-2099-8801", cpe)],
+            )
+            processor = InventoryObject(
+                "p", "Processors", "processor", "Intel(R) Xeon(R) CPU E5620 @ 2.40GHz",
+                {"Manufacturer": "Intel(R) Corporation"},
+                "fixture",
+            )
+
+            result = VulnerabilityCorrelator(
+                source_client=VulnerabilityDatabaseSourceClient(db_path)
+            ).enrich_from_sources([processor])
+
+        self.assertEqual(["CVE-2099-8801"], [item.cve for item in result.matches])
+        self.assertEqual("complete", result.coverage[processor.uid].state)
+        self.assertEqual("ambiguous", result.coverage[processor.uid].cpe_status)
+        self.assertGreaterEqual(result.coverage[processor.uid].candidate_count, 2)
+        self.assertGreaterEqual(result.coverage[processor.uid].evaluated_count, 1)
+
     def _build_cpe_enabled_database(
         self,
         root: Path,

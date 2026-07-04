@@ -98,11 +98,20 @@ class VulnerabilityDatabaseSourceClient:
         self.db_path = Path(db_path)
         self.used_snapshots: list[SourceSnapshot] = []
         self._usable_fts: bool | None = None
+        self._cpe_catalog = CpeCatalog(self.db_path)
+        self._nvd_candidates_cache: dict[
+            tuple[str, ...],
+            tuple[list[dict[str, Any]], bool, list[CollectorDiagnostic]],
+        ] = {}
+        self._term_query_cache: dict[
+            tuple[str, tuple[str, ...], tuple[str, ...], int],
+            tuple[list[dict[str, Any]], list[CollectorDiagnostic]],
+        ] = {}
         if not is_vulnerability_database(self.db_path):
             raise ValueError(f"Not a vulnerability database: {self.db_path}")
 
     def resolve_cpe(self, identity: InventoryIdentity) -> CpeResolution:
-        return CpeCatalog(self.db_path).resolve(identity)
+        return self._cpe_catalog.resolve(identity)
 
     def fetch_cisa_kev(self) -> tuple[list[dict[str, Any]], list[CollectorDiagnostic]]:
         try:
@@ -125,22 +134,42 @@ class VulnerabilityDatabaseSourceClient:
         obj: InventoryObject,
         limit: int = 2000,
     ) -> tuple[list[dict[str, Any]], list[CollectorDiagnostic]]:
-        identity = product_identity(obj)
-        product_terms = self._query_terms(" ".join([identity.product, obj.title]))
-        vendor_terms = self._query_terms(identity.vendor)
-        terms = []
-        if vendor_terms:
-            terms.append(vendor_terms[0])
-        for term in product_terms:
-            if term not in terms:
-                terms.append(term)
+        terms = self._terms_for_object_query(obj)
         parts = self._cpe_parts_for_object(obj.object_type)
-        return self._fetch_nvd_by_terms(obj.title, terms[:2], parts, limit=limit)
+        return self._fetch_nvd_by_terms(obj.title, terms, parts, limit=limit)
+
+    def _terms_for_object_query(self, obj: InventoryObject) -> list[str]:
+        identity = InventoryIdentityResolver().resolve(obj, [obj])
+        vendor_terms = self._query_terms(identity.vendor)
+        product_terms = self._query_terms(" ".join([identity.product, obj.title, *identity.variants]))
+        model_terms = self._query_terms(identity.model.replace("_", " "))
+        terms: list[str] = []
+
+        def add(value: str) -> None:
+            if value and value not in terms:
+                terms.append(value)
+
+        for term in vendor_terms[:1]:
+            add(term)
+        if obj.object_type in self.hardware_types:
+            preferred = model_terms or [term for term in product_terms if term not in vendor_terms]
+            for term in preferred[:3]:
+                add(term)
+        else:
+            for term in product_terms:
+                add(term)
+                if len(terms) >= 3:
+                    break
+        return terms
 
     def fetch_nvd_for_candidates(
         self,
         candidates: tuple[CpeCandidate, ...],
     ) -> tuple[list[dict[str, Any]], bool, list[CollectorDiagnostic]]:
+        cache_key = tuple(sorted(candidate.cpe.uri for candidate in candidates))
+        cached = self._nvd_candidates_cache.get(cache_key)
+        if cached is not None:
+            return cached
         records: dict[str, dict[str, Any]] = {}
         try:
             self._record_snapshot()
@@ -163,7 +192,7 @@ class VulnerabilityDatabaseSourceClient:
                     record = json.loads(str(row["raw_json"]))
                     record["_ib_match_requires_configuration"] = True
                     records[str(row["cve_id"])] = record
-            return list(records.values()), False, [
+            result = list(records.values()), False, [
                 CollectorDiagnostic(
                     "vulnerability_sources",
                     "info",
@@ -171,6 +200,8 @@ class VulnerabilityDatabaseSourceClient:
                     str(self.db_path),
                 )
             ]
+            self._nvd_candidates_cache[cache_key] = result
+            return result
         except Exception as exc:
             return [], False, [
                 CollectorDiagnostic(
@@ -192,6 +223,10 @@ class VulnerabilityDatabaseSourceClient:
             return [], [
                 CollectorDiagnostic("vulnerability_sources", "info", f"database skipped: {label}", str(self.db_path))
             ]
+        cache_key = (label, tuple(terms), parts, limit)
+        cached = self._term_query_cache.get(cache_key)
+        if cached is not None:
+            return cached
         try:
             self._record_snapshot()
             if self._has_usable_fts():
@@ -200,9 +235,11 @@ class VulnerabilityDatabaseSourceClient:
                 records = self._query_nvd_affected_products(terms, parts, limit)
             else:
                 records = self._query_nvd_raw_text(terms, limit)
-            return records, [
+            result = records, [
                 CollectorDiagnostic("vulnerability_sources", "info", f"database: {label}", str(self.db_path))
             ]
+            self._term_query_cache[cache_key] = result
+            return result
         except Exception as exc:
             return [], [
                 CollectorDiagnostic("vulnerability_sources", "warning", f"NVD database unavailable for {label}: {exc}", str(self.db_path))
@@ -346,6 +383,9 @@ class VulnerabilityDatabaseSourceClient:
             "ltd",
             "driver",
             "drivers",
+            "cpu",
+            "processor",
+            "processors",
             "software",
             "version",
         }
@@ -558,6 +598,36 @@ class VulnerabilityCorrelator:
                 return None
             group_uids = [obj.uid for obj, _identity in group]
             if resolution.status != "resolved":
+                if representative.object_type in self._direct_hardware_fallback_types() and hasattr(client, "fetch_nvd_for_object"):
+                    records, source_diagnostics = client.fetch_nvd_for_object(group[0][0])
+                    diagnostics.extend(source_diagnostics)
+                    group_matches = self._matches_from_cpe_records(
+                        records,
+                        group,
+                        representative,
+                        host_identities,
+                        evaluator,
+                        token,
+                    )
+                    matches.extend(group_matches)
+                    coverage_state = "complete" if records else "incomplete"
+                    coverage_reason = (
+                        "direct NVD affected-product fallback evaluated"
+                        if records
+                        else "direct NVD affected-product fallback found no candidates"
+                    )
+                    for uid in group_uids:
+                        coverage[uid] = self._coverage(
+                            uid,
+                            coverage_state,
+                            resolution.status,
+                            candidate_count=len(resolution.candidates),
+                            evaluated_count=len(records),
+                            truncated=False,
+                            reason=coverage_reason,
+                            trace={"identity": representative.group_key},
+                        )
+                    continue
                 for uid in group_uids:
                     coverage[uid] = self._coverage(
                         uid,
@@ -573,36 +643,15 @@ class VulnerabilityCorrelator:
 
             records, truncated, source_diagnostics = client.fetch_nvd_for_candidates(resolution.candidates)
             diagnostics.extend(source_diagnostics)
-            group_matches: list[VulnerabilityMatch] = []
-            for record in records:
-                token.raise_if_cancelled()
-                decision = evaluator.evaluate(
-                    list(record.get("configurations", [])),
-                    target=representative,
-                    host_identities=host_identities,
-                )
-                if decision.state not in {"confirmed", "potential"}:
-                    continue
-                cvss, severity = self._cvss(record)
-                cpe = decision.criteria[0] if decision.criteria else resolution.candidates[0].cpe.uri
-                for obj, _identity in group:
-                    group_matches.append(
-                        VulnerabilityMatch(
-                            cve=str(record.get("id", "")),
-                            source="NVD",
-                            severity=severity,
-                            cvss=cvss,
-                            kev=False,
-                            affected_title=obj.title,
-                            evidence=f"NVD applicability {decision.state}: {decision.reason}",
-                            confidence="High" if decision.state == "confirmed" else "Medium",
-                            remediation=self._generic_remediation(obj),
-                            references=self._references(record),
-                            object_uid=obj.uid,
-                            applicability=decision.state,
-                            cpe=cpe,
-                        )
-                    )
+            group_matches = self._matches_from_cpe_records(
+                records,
+                group,
+                representative,
+                host_identities,
+                evaluator,
+                token,
+                fallback_cpe=resolution.candidates[0].cpe.uri,
+            )
             matches.extend(group_matches)
             for uid in group_uids:
                 coverage[uid] = self._coverage(
@@ -618,6 +667,71 @@ class VulnerabilityCorrelator:
                     },
                 )
         return VulnerabilityCorrelationResult(matches, diagnostics, coverage, list(getattr(client, "used_snapshots", [])))
+
+    def _matches_from_cpe_records(
+        self,
+        records: list[dict[str, Any]],
+        group: list[tuple[InventoryObject, InventoryIdentity]],
+        representative: InventoryIdentity,
+        host_identities: list[InventoryIdentity],
+        evaluator: CpeApplicabilityEvaluator,
+        token: CancellationToken,
+        fallback_cpe: str = "",
+    ) -> list[VulnerabilityMatch]:
+        group_matches: list[VulnerabilityMatch] = []
+        for record in records:
+            token.raise_if_cancelled()
+            decision = evaluator.evaluate(
+                list(record.get("configurations", [])),
+                target=representative,
+                host_identities=host_identities,
+            )
+            if decision.state not in {"confirmed", "potential"}:
+                continue
+            cvss, severity = self._cvss(record)
+            cpe = decision.criteria[0] if decision.criteria else fallback_cpe
+            for obj, _identity in group:
+                group_matches.append(
+                    VulnerabilityMatch(
+                        cve=str(record.get("id", "")),
+                        source="NVD",
+                        severity=severity,
+                        cvss=cvss,
+                        kev=False,
+                        affected_title=obj.title,
+                        evidence=f"NVD applicability {decision.state}: {decision.reason}",
+                        confidence="High" if decision.state == "confirmed" else "Medium",
+                        remediation=self._generic_remediation(obj),
+                        references=self._references(record),
+                        object_uid=obj.uid,
+                        applicability=decision.state,
+                        cpe=cpe,
+                    )
+                )
+        return group_matches
+
+    @staticmethod
+    def _hardware_cpe_object_types() -> set[str]:
+        return {
+            "bios",
+            "base_board",
+            "device",
+            "display_adapter",
+            "network_adapter",
+            "physical_disk",
+            "processor",
+        }
+
+    @staticmethod
+    def _direct_hardware_fallback_types() -> set[str]:
+        return {
+            "bios",
+            "base_board",
+            "display_adapter",
+            "network_adapter",
+            "physical_disk",
+            "processor",
+        }
 
     @staticmethod
     def _coverage(

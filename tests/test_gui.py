@@ -494,6 +494,7 @@ class AuditWindowReportImportTests(unittest.TestCase):
         update_database.assert_called_once()
         self.assertEqual(Path("C:/outputs/vulnerability-database"), update_database.call_args.kwargs["output_dir"])
         self.assertTrue(update_database.call_args.kwargs["include_cpe"])
+        self.assertFalse(update_database.call_args.kwargs.get("include_cpe_match", False))
         self.assertIs(token, update_database.call_args.kwargs["cancel_token"])
         messages = list(window.messages.queue)
         self.assertTrue(any("CPE Dictionary=4" in message for message in messages))

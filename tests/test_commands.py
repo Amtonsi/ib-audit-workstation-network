@@ -97,10 +97,36 @@ class CommandRunnerTests(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertTrue(update_database.call_args.kwargs["include_cpe"])
+        self.assertFalse(update_database.call_args.kwargs["include_cpe_match"])
         output = stdout.getvalue()
         self.assertIn("CPE Dictionary: 4", output)
         self.assertIn("CPE Match: 5", output)
         self.assertIn("Active CPE generation: 6", output)
+
+    def test_update_database_script_enables_full_cpe_match_when_requested(self):
+        module = self._load_update_database_script()
+        result = {
+            "db_path": Path("C:/outputs/vulnerability_sources.db"),
+            "snapshot_dir": Path("C:/outputs/snapshots"),
+            "stats": {
+                "mode": "incremental",
+                "reused_sources": 0,
+                "updated_sources": 0,
+                "source_files": 0,
+                "cpe_names": 0,
+                "cpe_match_criteria": 0,
+                "active_cpe_generation": 0,
+            },
+        }
+        argv = ["update_vulnerability_database.py", "--output", "C:/outputs", "--with-cpe-match"]
+
+        with patch.object(module, "update_vulnerability_database", return_value=result) as update_database, \
+                patch.object(sys, "argv", argv), \
+                contextlib.redirect_stdout(io.StringIO()):
+            exit_code = module.main()
+
+        self.assertEqual(0, exit_code)
+        self.assertTrue(update_database.call_args.kwargs["include_cpe_match"])
 
     @staticmethod
     def _load_update_database_script():
