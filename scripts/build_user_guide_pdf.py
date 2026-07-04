@@ -670,17 +670,17 @@ def build_pdf(output_path: str | Path) -> Path:
         label_box(title_text, body_text, xx, y - 88, 220, 88, fill=fill, title_color=color)
         if idx < len(src_boxes) - 1:
             arrow(xx + 224, y - 44, xx + 244, y - 44, color=muted)
-    y -= 132
+    y -= 118
     set_font(15, bold=True)
     c.drawString(x, y, "Режимы в интерфейсе")
-    y -= 28
+    y -= 24
     label_box(
         "Полный онлайн ФСТЭК",
         "Использует CISA KEV, NVD и онлайн-запросы ФСТЭК БДУ. Подходит для максимально полной проверки при наличии интернета.",
         x,
-        y - 94,
+        y - 86,
         370,
-        94,
+        86,
         fill=panel,
         title_color=teal,
     )
@@ -688,21 +688,56 @@ def build_pdf(output_path: str | Path) -> Path:
         "Быстро: кэш NVD/CISA",
         "Использует локальные snapshots NVD/CISA без длительного онлайн-поиска ФСТЭК. Подходит для быстрой проверки.",
         x + 410,
-        y - 94,
+        y - 86,
         370,
-        94,
+        86,
         fill=panel,
         title_color=blue,
     )
-    y -= 130
+    y -= 112
+    set_font(15, bold=True)
+    c.drawString(x, y, "CPE, версии и аппаратные риски")
+    y -= 24
+    label_box(
+        "Что сравнивается",
+        "Для ПО и оборудования нормализуются производитель, название, модель и версия. Объект связывается с CPE/NVD; CPE Match включается флагом --with-cpe-match.",
+        x,
+        y - 86,
+        245,
+        86,
+        fill=panel,
+        title_color=teal,
+    )
+    label_box(
+        "Подтверждено",
+        "Риск подтверждён, когда продукт совпал с CPE и установленная версия входит в уязвимый диапазон CVE.",
+        x + 270,
+        y - 86,
+        245,
+        86,
+        fill=light_green,
+        title_color=green,
+    )
+    label_box(
+        "Потенциальный риск",
+        "Для процессоров, BIOS и прошивок модель может совпасть, но версии firmware/microcode нет. Такой случай помечается как потенциальный риск.",
+        x + 540,
+        y - 86,
+        245,
+        86,
+        fill=light_amber,
+        title_color=amber,
+    )
+    y -= 104
     set_font(15, bold=True)
     c.drawString(x, y, "Официальные ссылки")
-    y -= 26
-    for label, url in SOURCE_LINKS:
+    y -= 22
+    for index, (label, url) in enumerate(SOURCE_LINKS):
+        link_x = x + (index // 2) * 390
+        link_y = y - (index % 2) * 18
         set_font(10, bold=True)
-        c.drawString(x, y, f"{label}:")
-        draw_link(url, url, x + 120, y, size=10)
-        y -= 20
+        c.drawString(link_x, link_y, f"{label}:")
+        draw_link(url, url, link_x + 118, link_y, size=9.2)
     c.showPage()
 
     # Page 7 - batch HTML and cancellation
@@ -804,7 +839,7 @@ def build_pdf(output_path: str | Path) -> Path:
         ("GUI", "python run_app.py"),
         ("CLI-аудит", "python run_audit.py --no-open"),
         ("Offline-аудит", "python run_audit.py --offline --no-open"),
-        ("Обновление БД", "python scripts/update_vulnerability_database.py --output outputs\\vulnerability-database\nищет существующую vulnerability_sources.db и обновляет её инкрементально"),
+        ("Обновление БД", "python scripts/update_vulnerability_database.py --output outputs\\vulnerability-database\nпереиспользует CPE Dictionary; большой CPE Match включается флагом --with-cpe-match"),
         ("Сборка EXE", "python -m PyInstaller build\\pyinstaller\\IBAuditWorkstation.spec --noconfirm --clean --distpath outputs\\dist --workpath build\\pyinstaller\\work-batch-html"),
         ("Сборка PDF", "python scripts\\build_user_guide_pdf.py --output docs\\IBAuditWorkstation_UserGuide_RU.pdf"),
         ("Тесты", "python -m unittest discover -s tests"),

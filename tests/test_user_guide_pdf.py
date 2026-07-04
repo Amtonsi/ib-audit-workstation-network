@@ -38,6 +38,26 @@ class UserGuidePdfTests(unittest.TestCase):
         for text in expected:
             self.assertIn(text, usage_page)
 
+    def test_vulnerability_page_explains_cpe_matching_and_hardware_risks(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "build_user_guide_pdf.py").read_text(
+            encoding="utf-8"
+        )
+        vulnerability_page = source.split("# Page 6 - vulnerability sources", 1)[1].split(
+            "# Page 7 - batch HTML and cancellation", 1
+        )[0]
+
+        expected = (
+            "CPE, версии и аппаратные риски",
+            "производитель, название, модель и версия",
+            "Подтверждено",
+            "Потенциальный риск",
+            "firmware/microcode",
+            "--with-cpe-match",
+        )
+        for text in expected:
+            self.assertIn(text, vulnerability_page)
+
 
 if __name__ == "__main__":
     unittest.main()
