@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import os
+import ssl
+import subprocess
+import tempfile
+import urllib.error
 import webbrowser
+import zipfile
 from dataclasses import asdict
 from pathlib import Path
 
@@ -33,6 +38,18 @@ from .vulnerability_database import (
 VULNERABILITY_MODE_FULL = "full"
 VULNERABILITY_MODE_FAST = "fast"
 VULNERABILITY_MODES = {VULNERABILITY_MODE_FULL, VULNERABILITY_MODE_FAST}
+FSTEC_BDU_XLSX_URL = "https://bdu.fstec.ru/files/documents/vullist.xlsx"
+FSTEC_BDU_XLSX_NAMES = {
+    "vullist.xlsx",
+    "fstec-vullist.xlsx",
+    "bdu-vullist.xlsx",
+}
+FSTEC_ASUTP_XLSX_MARKERS = (
+    "уязвимости по",
+    "asutp",
+    "асутп",
+    "bduasutp",
+)
 
 
 def default_output_dir() -> Path:
@@ -56,6 +73,169 @@ def update_vulnerability_sources(
     return {"snapshots": source_client.used_snapshots, "diagnostics": diagnostics}
 
 
+def _fstec_source_for_xlsx(path: Path) -> str | None:
+    name = path.name.casefold()
+    stem = path.stem.casefold()
+    if name in FSTEC_BDU_XLSX_NAMES:
+        return "fstec-bdu"
+    if any(marker in stem for marker in FSTEC_ASUTP_XLSX_MARKERS):
+        return "fstec-asutp"
+    return None
+
+
+def _iter_existing_search_roots(*roots: Path) -> list[Path]:
+    result: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        try:
+            candidate = root.resolve()
+        except OSError:
+            candidate = root
+        if candidate in seen or not candidate.exists():
+            continue
+        seen.add(candidate)
+        result.append(candidate)
+    return result
+
+
+def discover_fstec_xlsx_sources(
+    project_root: str | Path,
+    output_dir: str | Path,
+    db_path: str | Path,
+) -> list[tuple[str, Path]]:
+    roots = _iter_existing_search_roots(
+        Path(project_root),
+        Path(output_dir),
+        Path(db_path).parent,
+    )
+    discovered: list[tuple[str, Path]] = []
+    seen: set[Path] = set()
+    for root in roots:
+        try:
+            paths = sorted(root.rglob("*.xlsx"))
+        except OSError:
+            continue
+        for path in paths:
+            source = _fstec_source_for_xlsx(path)
+            if source is None:
+                continue
+            try:
+                resolved = path.resolve()
+            except OSError:
+                resolved = path
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            discovered.append((source, path))
+    return sorted(discovered, key=lambda item: (0 if item[0] == "fstec-asutp" else 1, str(item[1]).casefold()))
+
+
+def _merge_fstec_xlsx_sources(
+    explicit_paths: list[tuple[str, Path]] | tuple[tuple[str, Path], ...] | None,
+    discovered_paths: list[tuple[str, Path]],
+) -> list[tuple[str, Path]]:
+    merged: list[tuple[str, Path]] = []
+    seen: set[tuple[str, Path]] = set()
+    for source, path in [*(explicit_paths or ()), *discovered_paths]:
+        candidate = Path(path)
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+        key = (source, resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append((source, candidate))
+    return merged
+
+
+def _is_valid_xlsx(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size > 0 and zipfile.is_zipfile(path)
+    except OSError:
+        return False
+
+
+def _has_valid_fstec_bdu_xlsx(paths: list[tuple[str, Path]]) -> bool:
+    return any(source == "fstec-bdu" and _is_valid_xlsx(Path(path)) for source, path in paths)
+
+
+def _is_ssl_certificate_error(exc: BaseException) -> bool:
+    reason = getattr(exc, "reason", None)
+    return isinstance(reason, ssl.SSLCertVerificationError) or "CERTIFICATE_VERIFY_FAILED" in str(exc)
+
+
+def _download_with_windows_cert_store(url: str, path: Path, timeout: int = 30) -> None:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        (
+            "$ProgressPreference='SilentlyContinue'; "
+            "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; "
+            "Invoke-WebRequest -UseBasicParsing -Uri $env:IB_AUDIT_DOWNLOAD_URL "
+            "-OutFile $env:IB_AUDIT_DOWNLOAD_PATH"
+        ),
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            env={
+                **os.environ,
+                "IB_AUDIT_DOWNLOAD_URL": url,
+                "IB_AUDIT_DOWNLOAD_PATH": str(target),
+            },
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(f"PowerShell download timed out after {timeout} seconds") from exc
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise RuntimeError(f"PowerShell download failed: {detail}")
+
+
+def _download_official_fstec_bdu_xlsx(
+    snapshot_dir: Path,
+    progress=None,
+    download_progress=None,
+    cancel_token: CancellationToken | None = None,
+) -> Path:
+    target = snapshot_dir / "fstec-bdu" / "vullist.xlsx"
+    if progress:
+        progress(f"Downloading FSTEC BDU XLSX: {FSTEC_BDU_XLSX_URL}")
+    try:
+        VulnerabilityDatabaseBuilder._download_to_file(
+            FSTEC_BDU_XLSX_URL,
+            target,
+            attempts=1,
+            timeout=30,
+            label="FSTEC BDU vullist.xlsx",
+            progress=download_progress,
+            cancel_token=cancel_token,
+        )
+    except urllib.error.URLError as exc:
+        if not _is_ssl_certificate_error(exc) or os.name != "nt":
+            raise
+        if progress:
+            progress("Python TLS validation failed for FSTEC BDU; retrying via Windows certificate store")
+        _download_with_windows_cert_store(FSTEC_BDU_XLSX_URL, target)
+    if not _is_valid_xlsx(target):
+        try:
+            target.unlink()
+        except OSError:
+            pass
+        raise ValueError(f"Downloaded FSTEC BDU XLSX is not a valid XLSX file: {target}")
+    return target
+
+
 def update_vulnerability_database(
     output_dir: str | Path | None = None,
     project_root: str | Path | None = None,
@@ -64,6 +244,7 @@ def update_vulnerability_database(
     include_delta: bool = True,
     include_cpe: bool = True,
     include_cpe_match: bool = False,
+    fstec_xlsx_paths: list[tuple[str, Path]] | tuple[tuple[str, Path], ...] | None = None,
     progress=None,
     download_progress=None,
     cancel_token: CancellationToken | None = None,
@@ -73,6 +254,29 @@ def update_vulnerability_database(
     db_path = find_vulnerability_database(root) or output / VULNERABILITY_DB_NAME
     snapshot_dir = db_path.parent / "snapshots"
     builder = VulnerabilityDatabaseBuilder(snapshot_dir, db_path)
+    local_fstec_xlsx_paths = _merge_fstec_xlsx_sources(
+        fstec_xlsx_paths,
+        discover_fstec_xlsx_sources(root, output, db_path),
+    )
+    fstec_download_errors = 0
+    if not _has_valid_fstec_bdu_xlsx(local_fstec_xlsx_paths):
+        try:
+            downloaded_bdu = _download_official_fstec_bdu_xlsx(
+                snapshot_dir,
+                progress=progress,
+                download_progress=download_progress,
+                cancel_token=cancel_token,
+            )
+            local_fstec_xlsx_paths = _merge_fstec_xlsx_sources(
+                local_fstec_xlsx_paths,
+                [("fstec-bdu", downloaded_bdu)],
+            )
+        except AuditCancelled:
+            raise
+        except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
+            fstec_download_errors += 1
+            if progress:
+                progress(f"FSTEC BDU XLSX download skipped: {exc}")
     stats = builder.update_database(
         start_year=start_year,
         end_year=end_year,
@@ -83,6 +287,34 @@ def update_vulnerability_database(
         download_progress=download_progress,
         cancel_token=cancel_token,
     )
+    if local_fstec_xlsx_paths:
+        fstec_records = 0
+        fstec_products = 0
+        fstec_import_errors = 0
+        for source, xlsx_path in local_fstec_xlsx_paths:
+            token_path = Path(xlsx_path)
+            if progress:
+                progress(f"Indexing FSTEC XLSX {source}: {token_path}")
+            try:
+                imported = builder.import_fstec_xlsx(
+                    token_path,
+                    source,
+                    progress=progress,
+                    cancel_token=cancel_token,
+                )
+            except AuditCancelled:
+                raise
+            except (OSError, RuntimeError, ValueError, zipfile.BadZipFile) as exc:
+                fstec_import_errors += 1
+                if progress:
+                    progress(f"Skipping FSTEC XLSX {token_path}: {exc}")
+                continue
+            fstec_records += int(imported.get("fstec_records", 0))
+            fstec_products += int(imported.get("fstec_products", 0))
+        stats["fstec_records"] = fstec_records
+        stats["fstec_products"] = fstec_products
+        stats["fstec_import_errors"] = fstec_import_errors
+    stats["fstec_download_errors"] = fstec_download_errors
     return {"db_path": db_path, "snapshot_dir": snapshot_dir, "stats": stats}
 
 
@@ -112,6 +344,19 @@ def _create_vulnerability_correlator(
     )
 
 
+def _audit_database_path(db_path: str | Path | None) -> tuple[Path, str, tempfile.TemporaryDirectory | None]:
+    if db_path is not None:
+        path = Path(db_path)
+        return path, str(path), None
+    temp_dir = tempfile.TemporaryDirectory(prefix="ib-audit-db-")
+    return Path(temp_dir.name) / "ib_audit.db", "temporary", temp_dir
+
+
+def _cleanup_audit_database(temp_db: tempfile.TemporaryDirectory | None) -> None:
+    if temp_db is not None:
+        temp_db.cleanup()
+
+
 def run_audit(
     db_path: str | Path | None = None,
     output_dir: str | Path | None = None,
@@ -125,7 +370,7 @@ def run_audit(
     token = cancel_token or CancellationToken()
     output = Path(output_dir or default_output_dir())
     output.mkdir(parents=True, exist_ok=True)
-    db = Path(db_path or output / "ib_audit.db")
+    db, db_label, _temp_db = _audit_database_path(db_path)
     repo = SQLiteRepository(db)
     engine = AuditEngine(repo, progress=progress, cancel_token=token)
     run, inventory, diagnostics = engine.run()
@@ -149,6 +394,7 @@ def run_audit(
         run.finished_at = utc_now()
         run.status = "cancelled"
         repo.save_run(run)
+        _cleanup_audit_database(_temp_db)
         raise
     diagnostics.extend(assessment.diagnostics)
     repo.save_diagnostics(run.id, assessment.diagnostics)
@@ -169,9 +415,10 @@ def run_audit(
     repo.save_report(ReportRecord(run.id, report_path, "html"))
     if open_report:
         webbrowser.open(Path(report_path).resolve().as_uri())
+    _cleanup_audit_database(_temp_db)
     return {
         "run": run,
-        "db_path": str(db),
+        "db_path": db_label,
         "report_path": report_path,
         "inventory_count": len(inventory),
         "diagnostic_count": len(diagnostics),
@@ -298,7 +545,7 @@ def analyze_report(
     source_path = Path(report_path)
     output = Path(output_dir or default_output_dir())
     output.mkdir(parents=True, exist_ok=True)
-    db = Path(db_path or output / "ib_audit.db")
+    db, db_label, _temp_db = _audit_database_path(db_path)
     repo = SQLiteRepository(db)
     service = _analysis_service(
         output,
@@ -324,9 +571,10 @@ def analyze_report(
     repo.save_report(ReportRecord(document.run.id, report_output, "html"))
     if open_report:
         webbrowser.open(Path(report_output).resolve().as_uri())
+    _cleanup_audit_database(_temp_db)
     return {
         "run": document.run,
-        "db_path": str(db),
+        "db_path": db_label,
         "report_path": report_output,
         "source_format": document.source_format,
         "source_report": str(source_path.resolve()),
@@ -358,7 +606,7 @@ def analyze_reports(
     token = cancel_token or CancellationToken()
     output = Path(output_dir or default_output_dir())
     output.mkdir(parents=True, exist_ok=True)
-    db = Path(db_path or output / "ib_audit.db")
+    db, db_label, _temp_db = _audit_database_path(db_path)
     repo = SQLiteRepository(db)
     service = _analysis_service(
         output,
@@ -427,9 +675,10 @@ def analyze_reports(
             )
     if open_report and report_output:
         webbrowser.open(Path(report_output).resolve().as_uri())
+    _cleanup_audit_database(_temp_db)
     return {
         "status": batch.status,
-        "db_path": str(db),
+        "db_path": db_label,
         "report_path": report_output,
         "selected_count": batch.selected_count,
         "processed_count": batch.processed_count,

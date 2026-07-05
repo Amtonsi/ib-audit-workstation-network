@@ -510,23 +510,23 @@ def build_pdf(output_path: str | Path) -> Path:
         ),
         (
             "2. Выбрать папку отчётов",
-            "Проверьте поле «Папка отчётов». Нажмите «Изменить», если HTML и "
-            "локальную историю нужно сохранять в другую папку.",
+            "Проверьте поле «Папка отчётов». Здесь сохраняются HTML и сводные "
+            "отчёты. Рабочая audit DB создаётся временно и удаляется после завершения.",
             light_blue,
             blue,
         ),
         (
             "3. Обновить базы",
-            "Нажмите «Обновить базы». Программа найдёт существующую "
-            "vulnerability_sources.db и добавит только отсутствующие или "
-            "обновлённые данные.",
+            "Нажмите «Обновить базы». Программа переиспользует vulnerability_sources.db "
+            "и добавляет только отсутствующие или актуальные NVD, CISA, CPE и "
+            "локальные XLSX ФСТЭК.",
             light_violet,
             violet,
         ),
         (
             "4. Выбрать режим",
             "«Полный онлайн ФСТЭК» выполняет онлайн-поиск БДУ. Быстрый режим "
-            "использует локальные базы NVD и CISA без длительных запросов ФСТЭК.",
+            "использует локальные NVD, CISA и импортированные XLSX ФСТЭК.",
             light_amber,
             amber,
         ),
@@ -619,7 +619,7 @@ def build_pdf(output_path: str | Path) -> Path:
         label_box(title_text, body_text, xx, y - box_h, box_w, box_h, fill=panel, title_color=teal)
         if idx < len(steps) - 1:
             arrow(xx + box_w + 3, y - box_h / 2, xx + box_w + step_gap - 4, y - box_h / 2)
-    label_box("6. Результат", "SQLite-история\nHTML-отчёт\nсводный batch-отчёт", x + 5 * (box_w + step_gap), y - box_h, box_w, box_h, fill=light_green, title_color=green)
+    label_box("6. Результат", "временная БД\nHTML / batch-отчёт", x + 5 * (box_w + step_gap), y - box_h, box_w, box_h, fill=light_green, title_color=green)
     arrow(x + 4 * (box_w + step_gap) + box_w + 3, y - box_h / 2, x + 5 * (box_w + step_gap) - 4, y - box_h / 2)
 
     y -= 136
@@ -644,7 +644,8 @@ def build_pdf(output_path: str | Path) -> Path:
     c.drawString(margin + 16, y - 24, "Ключевой принцип")
     draw_wrapped(
         "Отсутствие доказательств не считается безопасностью. Если объект найден, но данных для проверки мало, "
-        "он явно попадает в отчёт как insufficient_data.",
+        "он явно попадает в отчёт как insufficient_data. Постоянно хранится только база источников "
+        "vulnerability_sources.db; рабочая audit DB временная.",
         margin + 16,
         y - 44,
         page_width - margin * 2 - 32,
@@ -663,58 +664,58 @@ def build_pdf(output_path: str | Path) -> Path:
     src_boxes = [
         ("CISA KEV", "каталог известных эксплуатируемых уязвимостей", light_blue, blue),
         ("NVD CVE", "bulk feeds, recent и modified snapshots", light_violet, violet),
-        ("ФСТЭК БДУ", "онлайн-поиск по применимым объектам", light_amber, amber),
+        ("ФСТЭК БДУ", "локальные vullist.xlsx и АСУ ТП; онлайн-сверка", light_amber, amber),
     ]
     for idx, (title_text, body_text, fill, color) in enumerate(src_boxes):
         xx = x + idx * 250
-        label_box(title_text, body_text, xx, y - 88, 220, 88, fill=fill, title_color=color)
+        label_box(title_text, body_text, xx, y - 68, 220, 68, fill=fill, title_color=color)
         if idx < len(src_boxes) - 1:
-            arrow(xx + 224, y - 44, xx + 244, y - 44, color=muted)
-    y -= 118
+            arrow(xx + 224, y - 34, xx + 244, y - 34, color=muted)
+    y -= 98
     set_font(15, bold=True)
     c.drawString(x, y, "Режимы в интерфейсе")
     y -= 24
     label_box(
         "Полный онлайн ФСТЭК",
-        "Использует CISA KEV, NVD и онлайн-запросы ФСТЭК БДУ. Подходит для максимально полной проверки при наличии интернета.",
+        "Использует локальные NVD/CISA/FSTEC и онлайн-запросы ФСТЭК БДУ. Подходит для максимально полной проверки при наличии интернета.",
         x,
-        y - 86,
+        y - 72,
         370,
-        86,
+        72,
         fill=panel,
         title_color=teal,
     )
     label_box(
         "Быстро: кэш NVD/CISA",
-        "Использует локальные snapshots NVD/CISA без длительного онлайн-поиска ФСТЭК. Подходит для быстрой проверки.",
+        "Использует локальные NVD/CISA и импортированные XLSX ФСТЭК без длительного онлайн-поиска. Подходит для быстрой проверки.",
         x + 410,
-        y - 86,
+        y - 72,
         370,
-        86,
+        72,
         fill=panel,
         title_color=blue,
     )
-    y -= 112
+    y -= 92
     set_font(15, bold=True)
     c.drawString(x, y, "CPE, версии и аппаратные риски")
     y -= 24
     label_box(
         "Что сравнивается",
-        "Для ПО и оборудования нормализуются производитель, название, модель и версия. Объект связывается с CPE/NVD; CPE Match включается флагом --with-cpe-match.",
+        "Для ПО и оборудования нормализуются производитель, название, модель и версия. Учитываются псевдонимы и ребрендинг: Acronis Backup сопоставляется с Acronis Cyber Backup. CPE Match: --with-cpe-match.",
         x,
-        y - 86,
+        y - 108,
         245,
-        86,
+        108,
         fill=panel,
         title_color=teal,
     )
     label_box(
-        "Подтверждено",
-        "Риск подтверждён, когда продукт совпал с CPE и установленная версия входит в уязвимый диапазон CVE.",
+        "Подтверждено и критично",
+        "Если найдено несколько подходящих CPE-кандидатов, проверяется каждый. Критические находки отображаются только при подтверждённом совпадении продукта и версии с уязвимым диапазоном CVE.",
         x + 270,
-        y - 86,
+        y - 108,
         245,
-        86,
+        108,
         fill=light_green,
         title_color=green,
     )
@@ -722,13 +723,13 @@ def build_pdf(output_path: str | Path) -> Path:
         "Потенциальный риск",
         "Для процессоров, BIOS и прошивок модель может совпасть, но версии firmware/microcode нет. Такой случай помечается как потенциальный риск.",
         x + 540,
-        y - 86,
+        y - 108,
         245,
-        86,
+        108,
         fill=light_amber,
         title_color=amber,
     )
-    y -= 104
+    y -= 132
     set_font(15, bold=True)
     c.drawString(x, y, "Официальные ссылки")
     y -= 22

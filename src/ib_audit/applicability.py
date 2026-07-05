@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .cpe import CpeName, VersionDecision, compare_version
-from .identity import InventoryIdentity
+from .identity import InventoryIdentity, normalize_vendor
 
 
 @dataclass(frozen=True)
@@ -166,7 +166,7 @@ class CpeApplicabilityEvaluator:
     def _identity_matches_cpe(self, identity: InventoryIdentity, cpe: CpeName) -> bool:
         if not self._part_is_compatible(identity, cpe):
             return False
-        cpe_vendor = cpe.vendor.replace("_", " ")
+        cpe_vendor = normalize_vendor(cpe.vendor.replace("_", " "))
         if identity.vendor and cpe_vendor and identity.vendor != cpe_vendor:
             return False
         identity_tokens = self._tokens(

@@ -178,6 +178,15 @@ class AuditWindowReportImportTests(unittest.TestCase):
         self.assertEqual(92, progress_value_for_message("ФСТЭК БДУ: онлайн-поиск 50/100: windows", 92))
         self.assertEqual(85, progress_value_for_message("ФСТЭК БДУ: онлайн-поиск 50/0: windows", 85))
 
+    def test_nvd_cpe_progress_uses_real_group_ratio(self):
+        self.assertEqual(85, progress_value_for_message("Local NVD/CPE database: 0/100", 85))
+        self.assertEqual(88, progress_value_for_message("Local NVD/CPE database: 50/100", 85))
+        self.assertEqual(90, progress_value_for_message("Local NVD/CPE database: 100/100", 85))
+        self.assertEqual(
+            "Прогресс: NVD/CPE 50/100",
+            progress_status_for_message("Local NVD/CPE database: 50/100"),
+        )
+
     def test_cpe_update_progress_and_status_are_visible(self):
         status = format_database_update_status({
             "db_path": "C:/outputs/vulnerability_sources.db",
@@ -438,7 +447,7 @@ class AuditWindowReportImportTests(unittest.TestCase):
         self.assertEqual("C:/outputs/result.html", window.last_report)
         analyze_reports.assert_called_once_with(
             ("C:/reports/a.html", "C:/reports/b.html"),
-            db_path="C:/outputs/ib_audit.db",
+            db_path=None,
             output_dir="C:/outputs",
             open_report=False,
             progress=window.messages.put,
@@ -486,6 +495,10 @@ class AuditWindowReportImportTests(unittest.TestCase):
                 "cpe_names": 4,
                 "cpe_match_criteria": 5,
                 "active_cpe_generation": 6,
+                "fstec_vulnerabilities": 7,
+                "fstec_products": 8,
+                "fstec_import_errors": 1,
+                "fstec_download_errors": 2,
             },
         }
 
@@ -498,6 +511,9 @@ class AuditWindowReportImportTests(unittest.TestCase):
         self.assertIs(token, update_database.call_args.kwargs["cancel_token"])
         messages = list(window.messages.queue)
         self.assertTrue(any("CPE Dictionary=4" in message for message in messages))
+        self.assertTrue(any("FSTEC=7/8" in message for message in messages))
+        self.assertTrue(any("FSTEC XLSX errors=1" in message for message in messages))
+        self.assertTrue(any("FSTEC download errors=2" in message for message in messages))
         self.assertIn("__STATUS__:Базы обновлены", messages)
 
     @patch("ib_audit.gui_tk.threading.Thread")

@@ -12,7 +12,7 @@ from ib_audit.app import run_audit
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run local IB audit and generate HTML report.")
-    parser.add_argument("--db", default=None, help="SQLite DB path. Defaults to outputs/ib_audit.db")
+    parser.add_argument("--db", default=None, help="Optional SQLite audit DB path. Defaults to a temporary DB.")
     parser.add_argument("--output", default=None, help="Report output directory. Defaults to outputs/")
     parser.add_argument("--enrich", action="store_true", help="Try internet vulnerability enrichment.")
     parser.add_argument("--offline", action="store_true", help="Use cached vulnerability data and local rules only.")

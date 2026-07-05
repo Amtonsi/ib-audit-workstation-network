@@ -99,6 +99,32 @@ def _password_age_thresholds(rule: RuleDefinition) -> tuple[int, int]:
     return warning_days, critical_days
 
 
+def _industrial_protocol_exposed(obj: InventoryObject, value: object) -> bool:
+    port = str(value).strip()
+    protocol = str(obj.fields.get("Port Protocol", obj.fields.get("Protocol", "TCP"))).strip().upper()
+    address = str(obj.fields.get("Local Address", obj.fields.get("LocalAddress", ""))).strip()
+    industrial_tcp_ports = {
+        "102",     # Siemens S7 / ISO-TSAP
+        "502",     # Modbus TCP
+        "1089",    # Foundation Fieldbus HSE
+        "1091",    # Foxboro
+        "1911",    # Tridium Niagara Fox
+        "1962",    # PCWorx
+        "20000",   # DNP3
+        "2404",    # IEC 60870-5-104
+        "44818",   # EtherNet/IP
+        "47808",   # BACnet/IP
+    }
+    industrial_udp_ports = {"47808"}
+    if protocol == "UDP":
+        industrial = port in industrial_udp_ports
+    else:
+        industrial = port in industrial_tcp_ports
+    if not industrial:
+        return False
+    return address in {"0.0.0.0", "::", "*", ""}
+
+
 def _rule_severity(rule: RuleDefinition, value: object, status: str) -> str:
     if rule.evaluator != "password_age_threshold" or status != "risk":
         return rule.severity
@@ -185,6 +211,8 @@ class RuleEngine:
             age_days = _password_age_days(value)
             warning_days, _ = _password_age_thresholds(rule)
             return age_days is not None and age_days <= warning_days
+        if rule.evaluator == "industrial_protocol_exposure":
+            return not _industrial_protocol_exposed(obj, value)
         raise ValueError(f"Unknown evaluator: {rule.evaluator}")
 
 

@@ -3,11 +3,12 @@ from __future__ import annotations
 import re
 import sqlite3
 from dataclasses import dataclass
+from itertools import zip_longest
 from pathlib import Path
 from typing import Literal
 
 from .cpe import CpeName
-from .identity import InventoryIdentity
+from .identity import InventoryIdentity, normalize_vendor
 
 
 @dataclass(frozen=True)
@@ -61,9 +62,14 @@ class CpeCatalog:
             self._resolution_cache[identity.group_key] = result
             return result
         if len(candidates) > 1 and candidates[0].score - candidates[1].score < self.ambiguity_margin:
+            ambiguous_candidates = tuple(
+                candidate
+                for candidate in candidates
+                if candidates[0].score - candidate.score < self.ambiguity_margin
+            )[:25]
             result = CpeResolution(
                 "ambiguous",
-                tuple(candidates[:5]),
+                ambiguous_candidates,
                 "top CPE candidates are too close to choose safely",
             )
             self._resolution_cache[identity.group_key] = result
@@ -188,7 +194,7 @@ class CpeCatalog:
 
     def _score_row(self, identity: InventoryIdentity, row: sqlite3.Row) -> CpeCandidate | None:
         cpe = CpeName.parse(str(row["cpe_name"]))
-        cpe_vendor = cpe.vendor.replace("_", " ")
+        cpe_vendor = normalize_vendor(cpe.vendor.replace("_", " "))
         cpe_product = cpe.product.replace("_", " ")
         cpe_version = cpe.version.replace("_", " ")
         title = str(row["title"] or "")
@@ -241,7 +247,7 @@ class CpeCatalog:
             if cpe_version in {"", "*", "-"}:
                 score += 10
                 reasons.append("installed version present")
-            elif identity.version.casefold() == cpe_version.casefold():
+            elif self._versions_equal(identity.version, cpe_version):
                 score += 35
                 reasons.append("version exact")
 
@@ -292,6 +298,28 @@ class CpeCatalog:
         }
 
     @classmethod
+    def _versions_equal(cls, left: str, right: str) -> bool:
+        left = left.strip()
+        right = right.strip()
+        if left.casefold() == right.casefold():
+            return True
+        left_numbers = cls._numeric_version(left)
+        right_numbers = cls._numeric_version(right)
+        if left_numbers is None or right_numbers is None:
+            return False
+        for left_item, right_item in zip_longest(left_numbers, right_numbers, fillvalue=0):
+            if left_item != right_item:
+                return False
+        return True
+
+    @staticmethod
+    def _numeric_version(value: str) -> tuple[int, ...] | None:
+        numbers = re.findall(r"\d+", value)
+        if not numbers:
+            return None
+        return tuple(int(item) for item in numbers)
+
+    @classmethod
     def _ordered_tokens(cls, text: str, *, drop_numeric: bool = False) -> list[str]:
         blocked = {"and", "for", "the", "with", "core", "agent", "common", "file", "files"}
         result: list[str] = []
@@ -314,7 +342,7 @@ class CpeCatalog:
                 probes.append(value)
 
         add(identity.model.replace("_", " "))
-        for token in cls._ordered_tokens(" ".join((identity.product, *identity.variants)), drop_numeric=True)[:5]:
+        for token in cls._identity_product_terms(identity, drop_numeric=True)[:5]:
             add(token)
         return probes
 
@@ -322,7 +350,7 @@ class CpeCatalog:
     def _fts_queries(cls, identity: InventoryIdentity) -> list[str]:
         vendor_terms = cls._ordered_tokens(identity.vendor, drop_numeric=True)
         model_terms = cls._ordered_tokens(identity.model.replace("_", " "), drop_numeric=False)
-        product_terms = cls._ordered_tokens(" ".join((identity.product, *identity.variants)), drop_numeric=True)
+        product_terms = cls._identity_product_terms(identity, drop_numeric=True)
         queries: list[str] = []
 
         def add(tokens: list[str]) -> None:
@@ -342,6 +370,15 @@ class CpeCatalog:
         if vendor_terms and product_terms:
             add(vendor_terms + product_terms[:1])
         return queries
+
+    @classmethod
+    def _identity_product_terms(cls, identity: InventoryIdentity, *, drop_numeric: bool) -> list[str]:
+        vendor_terms = set(cls._ordered_tokens(identity.vendor, drop_numeric=True))
+        return [
+            term
+            for term in cls._ordered_tokens(" ".join((identity.product, *identity.variants)), drop_numeric=drop_numeric)
+            if term not in vendor_terms
+        ]
 
     @staticmethod
     def _has_table(con: sqlite3.Connection, name: str) -> bool:

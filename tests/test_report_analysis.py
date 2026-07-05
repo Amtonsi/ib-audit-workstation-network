@@ -95,6 +95,22 @@ class ReportAnalysisTests(unittest.TestCase):
         self.assertEqual(1, len(bundle["vulnerabilities"]))
         self.assertEqual(1, len(bundle["reports"]))
 
+    def test_default_imported_report_analysis_uses_temporary_audit_database(self):
+        source = self.temp_dir / "source.html"
+        source.write_text(IB_AUDIT_HTML, encoding="utf-8")
+        output = self.temp_dir / "outputs"
+
+        result = analyze_report(
+            source,
+            output_dir=output,
+            correlator=FakeCorrelator(),
+            online_sources=False,
+        )
+
+        self.assertEqual("temporary", result["db_path"])
+        self.assertTrue(Path(result["report_path"]).exists())
+        self.assertFalse((output / "ib_audit.db").exists())
+
     def test_batch_continues_after_invalid_document(self):
         first = self.temp_dir / "first.html"
         bad = self.temp_dir / "bad.html"

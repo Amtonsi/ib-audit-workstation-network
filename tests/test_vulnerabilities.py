@@ -6,11 +6,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, os.path.abspath("src"))
 
 from ib_audit.cancellation import AuditCancelled, CancellationToken
+from ib_audit.cpe import CpeName
+from ib_audit.cpe_catalog import CpeCandidate
 from ib_audit.models import CollectorDiagnostic, InventoryObject, VulnerabilityMatch
 from ib_audit.source_cache import SnapshotCache
 from ib_audit.vulnerabilities import (
@@ -528,6 +530,186 @@ class VulnerabilityCorrelatorTests(unittest.TestCase):
         self.assertIn("https://exploit.example/CVE-2099-9001", matches[0].references)
         self.assertFalse(any(item.severity == "warning" for item in diagnostics), diagnostics)
 
+    def test_enrichment_uses_local_fstec_xlsx_records_for_software_versions(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            db_path = root / "vulnerability_sources.db"
+            VulnerabilityDatabaseBuilder(root / "snapshots", db_path).build_database([])
+            self._insert_fstec_fixture(
+                db_path,
+                code="BDA:2026-157",
+                severity_text="Средний уровень опасности",
+                cvss=5.3,
+                product="PowerChute Serial Shutdown",
+                version_expression="до 1.5",
+            )
+            software = InventoryObject(
+                "s",
+                "Installed Software",
+                "software",
+                "PowerChute Serial Shutdown",
+                {"Name": "PowerChute Serial Shutdown", "Version": "1.4"},
+                "fixture",
+            )
+
+            result = VulnerabilityCorrelator(
+                source_client=VulnerabilityDatabaseSourceClient(db_path)
+            ).enrich_from_sources([software])
+
+        self.assertEqual(1, len(result.matches))
+        match = result.matches[0]
+        self.assertEqual("BDA:2026-157", match.cve)
+        self.assertEqual("ФСТЭК БДУ", match.source)
+        self.assertEqual("MEDIUM", match.severity)
+        self.assertEqual(5.3, match.cvss)
+        self.assertEqual("High", match.confidence)
+        self.assertEqual("confirmed", match.applicability)
+        self.assertEqual(software.uid, match.object_uid)
+
+    def test_local_fstec_product_match_without_version_is_potential_not_high_confidence(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            db_path = root / "vulnerability_sources.db"
+            VulnerabilityDatabaseBuilder(root / "snapshots", db_path).build_database([])
+            self._insert_fstec_fixture(
+                db_path,
+                code="BDA:2026-158",
+                severity_text="Высокий уровень опасности",
+                cvss=8.1,
+                product="PowerChute Serial Shutdown",
+                version_expression="до 1.5",
+            )
+            software = InventoryObject(
+                "s",
+                "Installed Software",
+                "software",
+                "PowerChute Serial Shutdown",
+                {"Name": "PowerChute Serial Shutdown"},
+                "fixture",
+            )
+
+            result = VulnerabilityCorrelator(
+                source_client=VulnerabilityDatabaseSourceClient(db_path)
+            ).enrich_from_sources([software])
+
+        self.assertEqual(1, len(result.matches))
+        self.assertEqual("potential", result.matches[0].applicability)
+        self.assertEqual("Medium", result.matches[0].confidence)
+
+    def test_local_fstec_groups_duplicate_product_versions_into_one_query(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            db_path = root / "vulnerability_sources.db"
+            VulnerabilityDatabaseBuilder(root / "snapshots", db_path).build_database([])
+            self._insert_fstec_fixture(
+                db_path,
+                code="BDA:2026-159",
+                severity_text="Высокий уровень опасности",
+                cvss=8.1,
+                product="PowerChute Serial Shutdown",
+                version_expression="до 1.5",
+            )
+            first = InventoryObject(
+                "s",
+                "Installed Software",
+                "software",
+                "PowerChute Serial Shutdown",
+                {"Name": "PowerChute Serial Shutdown", "Version": "1.4"},
+                "fixture",
+            )
+            second = InventoryObject(
+                "s",
+                "Installed Software",
+                "software",
+                "PowerChute Serial Shutdown",
+                {"Name": "PowerChute Serial Shutdown", "Version": "1.4"},
+                "fixture",
+            )
+            client = VulnerabilityDatabaseSourceClient(db_path)
+
+            with patch.object(
+                client,
+                "_query_fstec_products",
+                wraps=client._query_fstec_products,
+            ) as query:
+                matches, _diagnostics = client.fetch_fstec_matches([first, second])
+
+        self.assertEqual(1, query.call_count)
+        self.assertEqual({first.uid, second.uid}, {match.object_uid for match in matches})
+
+    def test_database_candidate_fetch_deduplicates_same_product_key(self):
+        class FakeRow(dict):
+            def __getitem__(self, key):
+                return super().__getitem__(key)
+
+        with tempfile.TemporaryDirectory() as temp:
+            db_path = Path(temp) / "vulnerability_sources.db"
+            VulnerabilityDatabaseBuilder(Path(temp) / "snapshots", db_path).build_database([])
+            client = VulnerabilityDatabaseSourceClient(db_path)
+            record = {"id": "CVE-2099-1010", "configurations": []}
+            rows = [FakeRow(cve_id="CVE-2099-1010", raw_json=json.dumps(record))]
+            candidates = (
+                CpeCandidate(
+                    CpeName.parse("cpe:2.3:a:microsoft:office:2010:*:*:*:*:*:*:*"),
+                    "OFFICE-2010",
+                    "Microsoft Office 2010",
+                    90,
+                    (),
+                ),
+                CpeCandidate(
+                    CpeName.parse("cpe:2.3:a:microsoft:office:2013:*:*:*:*:*:*:*"),
+                    "OFFICE-2013",
+                    "Microsoft Office 2013",
+                    90,
+                    (),
+                ),
+            )
+
+            with patch.object(client, "_fetch_rows", return_value=rows) as fetch_rows:
+                records, _truncated, diagnostics = client.fetch_nvd_for_candidates(candidates)
+
+        self.assertEqual(["CVE-2099-1010"], [item["id"] for item in records])
+        self.assertEqual(1, fetch_rows.call_count)
+        self.assertTrue(any("CPE candidates" in item.message for item in diagnostics))
+
+    def test_database_candidate_fetch_reuses_same_product_key_across_calls(self):
+        class FakeRow(dict):
+            def __getitem__(self, key):
+                return super().__getitem__(key)
+
+        with tempfile.TemporaryDirectory() as temp:
+            db_path = Path(temp) / "vulnerability_sources.db"
+            VulnerabilityDatabaseBuilder(Path(temp) / "snapshots", db_path).build_database([])
+            client = VulnerabilityDatabaseSourceClient(db_path)
+            record = {"id": "CVE-2099-1011", "configurations": []}
+            rows = [FakeRow(cve_id="CVE-2099-1011", raw_json=json.dumps(record))]
+            first_candidates = (
+                CpeCandidate(
+                    CpeName.parse("cpe:2.3:a:microsoft:office:2010:*:*:*:*:*:*:*"),
+                    "OFFICE-2010",
+                    "Microsoft Office 2010",
+                    90,
+                    (),
+                ),
+            )
+            second_candidates = (
+                CpeCandidate(
+                    CpeName.parse("cpe:2.3:a:microsoft:office:2013:*:*:*:*:*:*:*"),
+                    "OFFICE-2013",
+                    "Microsoft Office 2013",
+                    90,
+                    (),
+                ),
+            )
+
+            with patch.object(client, "_fetch_rows", return_value=rows) as fetch_rows:
+                first_records, _truncated, _diagnostics = client.fetch_nvd_for_candidates(first_candidates)
+                second_records, _truncated, _diagnostics = client.fetch_nvd_for_candidates(second_candidates)
+
+        self.assertEqual(["CVE-2099-1011"], [item["id"] for item in first_records])
+        self.assertEqual(["CVE-2099-1011"], [item["id"] for item in second_records])
+        self.assertEqual(1, fetch_rows.call_count)
+
     def test_cpe_correlation_returns_coverage_and_duplicate_uid_matches(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -563,6 +745,32 @@ class VulnerabilityCorrelatorTests(unittest.TestCase):
         self.assertEqual({"confirmed"}, {item.applicability for item in result.matches})
         self.assertEqual("complete", result.coverage[first.uid].state)
         self.assertEqual("resolved", result.coverage[first.uid].cpe_status)
+
+    def test_cpe_correlation_reports_group_progress(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            db_path = self._build_cpe_enabled_database(
+                root,
+                cpes=[
+                    ("SQL-1", "cpe:2.3:a:microsoft:sql_server:*:*:*:*:*:*:*:*", "Microsoft SQL Server"),
+                ],
+                cves=[],
+            )
+            software = InventoryObject(
+                "s",
+                "Installed Software",
+                "software",
+                "SQL Server 2012 Common Files",
+                {"Vendor": "Microsoft", "Version": "11.1.3000.0"},
+                "fixture",
+            )
+            progress: list[str] = []
+
+            VulnerabilityCorrelator(
+                source_client=VulnerabilityDatabaseSourceClient(db_path)
+            ).enrich_from_sources([software], progress=progress.append)
+
+        self.assertIn("Local NVD/CPE database: 1/1", progress)
 
     def test_cpe_correlation_marks_fixed_version_complete_without_match(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -684,6 +892,127 @@ class VulnerabilityCorrelatorTests(unittest.TestCase):
         self.assertEqual("ambiguous", result.coverage[processor.uid].cpe_status)
         self.assertGreaterEqual(result.coverage[processor.uid].candidate_count, 2)
         self.assertGreaterEqual(result.coverage[processor.uid].evaluated_count, 1)
+
+    def test_ambiguous_software_cpe_candidates_are_still_evaluated(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cpe = "cpe:2.3:a:example:backup:*:*:*:*:*:*:*:*"
+            db_path = self._build_cpe_enabled_database(
+                root,
+                cpes=[
+                    ("BACKUP-1", cpe, "Example Backup"),
+                    ("BACKUP-2", "cpe:2.3:a:example:backup_agent:*:*:*:*:*:*:*:*", "Example Backup Agent"),
+                ],
+                cves=[
+                    self._cve("CVE-2099-7701", cpe, version_end_excluding="2.0"),
+                ],
+            )
+            software = InventoryObject(
+                "s", "Installed Software", "software", "Example Backup",
+                {"Vendor": "Example", "Version": "1.0"},
+                "fixture",
+            )
+
+            result = VulnerabilityCorrelator(
+                source_client=VulnerabilityDatabaseSourceClient(db_path)
+            ).enrich_from_sources([software])
+
+        self.assertEqual(["CVE-2099-7701"], [item.cve for item in result.matches])
+        self.assertEqual("complete", result.coverage[software.uid].state)
+        self.assertEqual("ambiguous", result.coverage[software.uid].cpe_status)
+        self.assertGreaterEqual(result.coverage[software.uid].candidate_count, 2)
+        self.assertGreaterEqual(result.coverage[software.uid].evaluated_count, 1)
+
+    def test_acronis_backup_rebrand_candidates_are_evaluated(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cyber_backup = "cpe:2.3:a:acronis:cyber_backup:*:*:*:*:*:*:*:*"
+            db_path = self._build_cpe_enabled_database(
+                root,
+                cpes=[
+                    ("ABR-1", "cpe:2.3:a:acronis:backup_\\&_recovery_agent:11.0.17217:*:*:*:*:*:*:*", "Acronis Backup & Recovery Agent 11.0.17217"),
+                    ("ABR-2", "cpe:2.3:a:acronis:backup_\\&_recovery_agent:11.0.17318:*:*:*:*:*:*:*", "Acronis Backup & Recovery Agent 11.0.17318"),
+                    ("ABR-3", "cpe:2.3:a:acronis:backup_\\&_recovery_agent_core:11.0.17217:*:*:*:*:*:*:*", "Acronis Backup & Recovery Agent Core 11.0.17217"),
+                    ("ABR-4", "cpe:2.3:a:acronis:backup_\\&_recovery_agent_core:11.0.17318:*:*:*:*:*:*:*", "Acronis Backup & Recovery Agent Core 11.0.17318"),
+                    ("ABR-5", "cpe:2.3:a:acronis:backup_\\&_recovery_management_console:11.0.17318:*:*:*:*:*:*:*", "Acronis Backup & Recovery Management Console 11.0.17318"),
+                ],
+                cves=[
+                    self._cve("CVE-2099-9901", cyber_backup, version_end_excluding="12.5"),
+                ],
+            )
+            software = InventoryObject(
+                "s", "Installed Software", "software", "Acronis Backup 11.7 Agent Core",
+                {"Vendor": "Acronis", "Version": "11.7.50058"},
+                "fixture",
+            )
+
+            result = VulnerabilityCorrelator(
+                source_client=VulnerabilityDatabaseSourceClient(db_path)
+            ).enrich_from_sources([software])
+
+        self.assertEqual(["CVE-2099-9901"], [item.cve for item in result.matches])
+        self.assertEqual("confirmed", result.matches[0].applicability)
+        self.assertEqual("complete", result.coverage[software.uid].state)
+
+    @staticmethod
+    def _insert_fstec_fixture(
+        db_path: Path,
+        *,
+        code: str,
+        severity_text: str,
+        cvss: float,
+        product: str,
+        version_expression: str,
+    ) -> None:
+        con = sqlite3.connect(db_path)
+        try:
+            con.execute(
+                """
+                insert into fstec_vulnerabilities(
+                    source,code,name,description,severity_text,cvss,exploit_status,
+                    exploit_available,references_json,external_ids,remediation,
+                    version_info,raw_json,imported_at
+                ) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    "fstec-asutp",
+                    code,
+                    f"{product} vulnerability",
+                    f"{product} {version_expression}",
+                    severity_text,
+                    cvss,
+                    "Существует в открытом доступе",
+                    1,
+                    json.dumps(["https://vendor.example/advisory"]),
+                    "",
+                    "Обновление программного обеспечения",
+                    f"{version_expression} ({product})",
+                    "{}",
+                    "2099-01-01T00:00:00+00:00",
+                ),
+            )
+            normalized = product.casefold()
+            con.execute(
+                """
+                insert into fstec_vulnerability_products(
+                    source,code,product,vendor,version_expression,
+                    normalized_product,normalized_vendor,search_text
+                ) values(?,?,?,?,?,?,?,?)
+                """,
+                (
+                    "fstec-asutp",
+                    code,
+                    product,
+                    "",
+                    version_expression,
+                    normalized,
+                    "",
+                    f"{normalized} {version_expression.casefold()}",
+                ),
+            )
+            con.commit()
+        finally:
+            con.close()
 
     def _build_cpe_enabled_database(
         self,

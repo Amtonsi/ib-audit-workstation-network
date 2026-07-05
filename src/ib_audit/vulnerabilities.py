@@ -103,9 +103,14 @@ class VulnerabilityDatabaseSourceClient:
             tuple[str, ...],
             tuple[list[dict[str, Any]], bool, list[CollectorDiagnostic]],
         ] = {}
+        self._nvd_product_cache: dict[tuple[str, str, str], dict[str, dict[str, Any]]] = {}
         self._term_query_cache: dict[
             tuple[str, tuple[str, ...], tuple[str, ...], int],
             tuple[list[dict[str, Any]], list[CollectorDiagnostic]],
+        ] = {}
+        self._affected_alias_cache: dict[
+            tuple[tuple[tuple[str, str, str], ...], int],
+            list[dict[str, Any]],
         ] = {}
         if not is_vulnerability_database(self.db_path):
             raise ValueError(f"Not a vulnerability database: {self.db_path}")
@@ -134,6 +139,19 @@ class VulnerabilityDatabaseSourceClient:
         obj: InventoryObject,
         limit: int = 2000,
     ) -> tuple[list[dict[str, Any]], list[CollectorDiagnostic]]:
+        identity = InventoryIdentityResolver().resolve(obj, [obj])
+        aliases = self._affected_product_aliases(identity)
+        if aliases:
+            records = self._query_nvd_affected_product_aliases(aliases, limit)
+            if records:
+                return records, [
+                    CollectorDiagnostic(
+                        "vulnerability_sources",
+                        "info",
+                        f"database affected-product aliases: {obj.title}",
+                        str(self.db_path),
+                    )
+                ]
         terms = self._terms_for_object_query(obj)
         parts = self._cpe_parts_for_object(obj.object_type)
         return self._fetch_nvd_by_terms(obj.title, terms, parts, limit=limit)
@@ -156,6 +174,9 @@ class VulnerabilityDatabaseSourceClient:
             for term in preferred[:3]:
                 add(term)
         else:
+            if identity.vendor == "acronis" and "backup" in product_terms and "cyber" in product_terms:
+                add("cyber")
+                add("backup")
             for term in product_terms:
                 add(term)
                 if len(terms) >= 3:
@@ -173,25 +194,35 @@ class VulnerabilityDatabaseSourceClient:
         records: dict[str, dict[str, Any]] = {}
         try:
             self._record_snapshot()
+            queried_products: set[tuple[str, str, str]] = set()
             for candidate in candidates:
-                rows = self._fetch_rows(
-                    """
-                    select distinct c.cve_id, c.raw_json
-                    from nvd_cves c
-                    join nvd_affected_products p on p.cve_id = c.cve_id
-                    where p.part = ? and p.vendor = ? and p.product = ?
-                    order by coalesce(c.cvss, 0) desc, c.cve_id
-                    """,
-                    (
-                        candidate.cpe.part,
-                        candidate.cpe.vendor.replace("_", " "),
-                        candidate.cpe.product.replace("_", " "),
-                    ),
+                product_key = (
+                    candidate.cpe.part,
+                    candidate.cpe.vendor.replace("_", " "),
+                    candidate.cpe.product.replace("_", " "),
                 )
-                for row in rows:
-                    record = json.loads(str(row["raw_json"]))
-                    record["_ib_match_requires_configuration"] = True
-                    records[str(row["cve_id"])] = record
+                if product_key in queried_products:
+                    continue
+                queried_products.add(product_key)
+                product_records = self._nvd_product_cache.get(product_key)
+                if product_records is None:
+                    rows = self._fetch_rows(
+                        """
+                        select distinct c.cve_id, c.raw_json
+                        from nvd_cves c
+                        join nvd_affected_products p on p.cve_id = c.cve_id
+                        where p.part = ? and p.vendor = ? and p.product = ?
+                        order by coalesce(c.cvss, 0) desc, c.cve_id
+                        """,
+                        product_key,
+                    )
+                    product_records = {}
+                    for row in rows:
+                        record = json.loads(str(row["raw_json"]))
+                        record["_ib_match_requires_configuration"] = True
+                        product_records[str(row["cve_id"])] = record
+                    self._nvd_product_cache[product_key] = product_records
+                records.update(product_records)
             result = list(records.values()), False, [
                 CollectorDiagnostic(
                     "vulnerability_sources",
@@ -211,6 +242,67 @@ class VulnerabilityDatabaseSourceClient:
                     str(self.db_path),
                 )
             ]
+
+    def fetch_fstec_matches(
+        self,
+        inventory: list[InventoryObject],
+        progress=None,
+        cancel_token: CancellationToken | None = None,
+        limit_per_object: int = 200,
+    ) -> tuple[list[VulnerabilityMatch], list[CollectorDiagnostic]]:
+        token = cancel_token or CancellationToken()
+        if not self._has_table("fstec_vulnerabilities") or not self._has_table("fstec_vulnerability_products"):
+            return [], [
+                CollectorDiagnostic("vulnerability_sources", "info", "database: no local FSTEC tables", str(self.db_path))
+            ]
+        resolver = InventoryIdentityResolver()
+        matches: list[VulnerabilityMatch] = []
+        diagnostics: list[CollectorDiagnostic] = []
+        seen: set[tuple[str, str, str]] = set()
+        grouped: dict[
+            tuple[str, str, str, str, tuple[str, ...]],
+            list[tuple[InventoryObject, InventoryIdentity]],
+        ] = {}
+        for obj in inventory:
+            identity = resolver.resolve(obj, inventory)
+            grouped.setdefault(identity.group_key, []).append((obj, identity))
+        processed = 0
+        next_progress = 100
+        for group in grouped.values():
+            token.raise_if_cancelled()
+            obj, identity = group[0]
+            processed += len(group)
+            if progress and processed >= next_progress:
+                progress(f"Local FSTEC database: {processed}/{len(inventory)}")
+                next_progress = ((processed // 100) + 1) * 100
+            terms = self._terms_for_fstec_identity(identity, obj)
+            if not terms:
+                continue
+            rows = self._query_fstec_products(terms, limit=limit_per_object)
+            for row in rows:
+                token.raise_if_cancelled()
+                if not self._fstec_product_matches(identity, obj, str(row["product"])):
+                    continue
+                version_state = self._fstec_version_matches(identity.version, str(row["version_expression"]))
+                if version_state is False:
+                    continue
+                for grouped_obj, _grouped_identity in group:
+                    key = (str(row["code"]), grouped_obj.uid, str(row["source"]))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    matches.append(self._fstec_row_to_match(row, grouped_obj, version_state))
+        diagnostics.append(
+            CollectorDiagnostic(
+                "vulnerability_sources",
+                "info",
+                f"database: local FSTEC matches={len(matches)} candidates={len(inventory)}",
+                str(self.db_path),
+            )
+        )
+        if matches:
+            self._record_snapshot()
+        return matches, diagnostics
 
     def _fetch_nvd_by_terms(
         self,
@@ -297,6 +389,67 @@ class VulnerabilityDatabaseSourceClient:
             params,
         )
         return self._nvd_records_from_rows(rows, require_configuration=True)
+
+    def _query_fstec_products(self, terms: list[str], limit: int) -> list[sqlite3.Row]:
+        if not terms:
+            return []
+        where = []
+        params: list[object] = []
+        for term in terms[:4]:
+            where.append("p.search_text like ?")
+            params.append(f"%{term.casefold()}%")
+        params.append(limit)
+        return self._fetch_rows(
+            f"""
+            select
+                v.source,v.code,v.name,v.description,v.severity_text,v.cvss,
+                v.exploit_status,v.exploit_available,v.references_json,
+                v.external_ids,v.remediation,v.version_info,
+                p.product,p.vendor,p.version_expression,p.normalized_product,
+                p.normalized_vendor,p.search_text
+            from fstec_vulnerability_products p
+            join fstec_vulnerabilities v
+              on v.source = p.source and v.code = p.code
+            where {' and '.join(where)}
+            order by coalesce(v.cvss, 0) desc, v.code
+            limit ?
+            """,
+            params,
+        )
+
+    def _query_nvd_affected_product_aliases(
+        self,
+        aliases: tuple[tuple[str, str, str], ...],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        cache_key = (aliases, limit)
+        cached = self._affected_alias_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        where = ["p.vulnerable = 1"]
+        params: list[object] = []
+        alias_clauses = []
+        for part, vendor, product in aliases:
+            alias_clauses.append("(p.part = ? and p.vendor = ? and p.product = ?)")
+            params.extend([part, vendor, product])
+        where.append("(" + " or ".join(alias_clauses) + ")")
+        params.append(limit)
+        rows = self._fetch_rows(
+            f"""
+            select distinct c.raw_json
+            from nvd_cves c
+            join nvd_affected_products p on p.cve_id = c.cve_id
+            where {' and '.join(where)}
+            order by coalesce(c.cvss, 0) desc, c.cve_id
+            limit ?
+            """,
+            params,
+        )
+        records = self._nvd_records_from_rows(rows, require_configuration=True)
+        self._affected_alias_cache[cache_key] = records
+        if records:
+            self._record_snapshot()
+        return records
 
     def _query_nvd_raw_text(self, terms: list[str], limit: int) -> list[dict[str, Any]]:
         where = []
@@ -404,6 +557,147 @@ class VulnerabilityDatabaseSourceClient:
         return " ".join(unique_terms)
 
     @classmethod
+    def _terms_for_fstec_identity(cls, identity: InventoryIdentity, obj: InventoryObject) -> list[str]:
+        text = " ".join(
+            [
+                identity.vendor,
+                identity.product,
+                identity.model.replace("_", " "),
+                obj.title,
+                *identity.variants,
+            ]
+        )
+        terms: list[str] = []
+        for term in cls._query_terms(text):
+            if term not in terms:
+                terms.append(term)
+        return terms[:5]
+
+    @classmethod
+    def _fstec_product_matches(cls, identity: InventoryIdentity, obj: InventoryObject, product: str) -> bool:
+        product_terms = set(cls._query_terms(product))
+        if not product_terms:
+            return False
+        identity_terms = set(
+            cls._query_terms(
+                " ".join([identity.product, obj.title, identity.model.replace("_", " "), *identity.variants])
+            )
+        )
+        return product_terms.issubset(identity_terms)
+
+    @classmethod
+    def _fstec_version_matches(cls, installed: str, expression: str) -> bool | None:
+        installed = str(installed or "").strip()
+        expression = str(expression or "").strip()
+        if not installed:
+            return None
+        installed_value = cls._version_tuple(installed)
+        if installed_value is None:
+            return None
+        normalized = " ".join(expression.casefold().replace(",", ".").split())
+        if normalized in {"", "-", "данные уточняются"}:
+            return None
+        range_match = re.search(r"от\s+([0-9][\w.-]*)\s+до\s+([0-9][\w.-]*)", normalized)
+        if range_match:
+            lower = cls._version_tuple(range_match.group(1))
+            upper = cls._version_tuple(range_match.group(2))
+            if lower is None or upper is None:
+                return None
+            inclusive = "включительно" in normalized
+            return installed_value >= lower and (installed_value <= upper if inclusive else installed_value < upper)
+        before_match = re.search(r"до\s+([0-9][\w.-]*)", normalized)
+        if before_match:
+            upper = cls._version_tuple(before_match.group(1))
+            if upper is None:
+                return None
+            return installed_value <= upper if "включительно" in normalized else installed_value < upper
+        below_match = re.search(r"([0-9][\w.-]*)\s+и\s+ниже", normalized)
+        if below_match:
+            upper = cls._version_tuple(below_match.group(1))
+            return None if upper is None else installed_value <= upper
+        above_match = re.search(r"([0-9][\w.-]*)\s+и\s+выше", normalized)
+        if above_match:
+            lower = cls._version_tuple(above_match.group(1))
+            return None if lower is None else installed_value >= lower
+        exact = cls._version_tuple(normalized)
+        return None if exact is None else installed_value == exact
+
+    @classmethod
+    def _fstec_row_to_match(
+        cls,
+        row: sqlite3.Row,
+        obj: InventoryObject,
+        version_state: bool | None,
+    ) -> VulnerabilityMatch:
+        applicability = "confirmed" if version_state is True else "potential"
+        installed = InventoryIdentityResolver().resolve(obj, [obj]).version
+        version_note = (
+            "affected version confirmed"
+            if version_state is True
+            else "version requires manual confirmation"
+        )
+        try:
+            references = json.loads(str(row["references_json"] or "[]"))
+            if not isinstance(references, list):
+                references = []
+        except json.JSONDecodeError:
+            references = []
+        return VulnerabilityMatch(
+            cve=str(row["code"]),
+            source="ФСТЭК БДУ",
+            severity=cls._fstec_severity(str(row["severity_text"]), row["cvss"]),
+            cvss=row["cvss"],
+            kev=False,
+            affected_title=obj.title,
+            evidence=(
+                f"FSTEC local product '{row['product']}' version '{row['version_expression']}' "
+                f"matched '{obj.title}' version '{installed or 'unknown'}'; {version_note}."
+            ),
+            confidence="High" if version_state is True else "Medium",
+            remediation=str(row["remediation"] or "") or cls._generic_remediation(obj),
+            references=[str(item) for item in references if item][:8],
+            object_uid=obj.uid,
+            applicability=applicability,
+        )
+
+    @staticmethod
+    def _fstec_severity(text: str, cvss: object) -> str:
+        lowered = text.casefold()
+        if "крит" in lowered:
+            return "CRITICAL"
+        if "высок" in lowered:
+            return "HIGH"
+        if "сред" in lowered:
+            return "MEDIUM"
+        if "низк" in lowered:
+            return "LOW"
+        try:
+            value = float(cvss)
+        except (TypeError, ValueError):
+            return "UNKNOWN"
+        if value >= 9:
+            return "CRITICAL"
+        if value >= 7:
+            return "HIGH"
+        if value >= 4:
+            return "MEDIUM"
+        return "LOW"
+
+    @staticmethod
+    def _version_tuple(value: str) -> tuple[int, ...] | None:
+        match = re.search(r"\d+(?:[._-]\d+)*", value)
+        if not match:
+            return None
+        return tuple(int(part) for part in re.split(r"[._-]", match.group(0)))
+
+    @staticmethod
+    def _affected_product_aliases(identity: InventoryIdentity) -> tuple[tuple[str, str, str], ...]:
+        variants = " ".join((identity.product, *identity.variants))
+        if identity.object_type == "software" and identity.vendor == "acronis" and "backup" in variants:
+            return (("a", "acronis", "cyber backup"),)
+        return ()
+
+    @classmethod
     def _cpe_parts_for_object(cls, object_type: str) -> tuple[str, ...]:
         if object_type in cls.operating_system_types:
             return ("o",)
@@ -507,7 +801,12 @@ class VulnerabilityCorrelator:
         matches = self.match_inventory(candidate_inventory, kev, [])
         coverage: dict[str, VulnerabilityCoverage] = {}
         cpe_handled_uids: set[str] = set()
-        cpe_result = self._enrich_from_cpe_sources(candidate_inventory, client, token)
+        cpe_result = self._enrich_from_cpe_sources(
+            candidate_inventory,
+            client,
+            token,
+            progress=progress,
+        )
         if cpe_result is not None:
             matches.extend(cpe_result.matches)
             diagnostics.extend(cpe_result.diagnostics)
@@ -531,6 +830,14 @@ class VulnerabilityCorrelator:
             token.raise_if_cancelled()
             diagnostics.extend(diag)
             matches.extend(self.match_inventory(objects, [], records))
+        if hasattr(client, "fetch_fstec_matches"):
+            fstec_db_matches, fstec_db_diagnostics = client.fetch_fstec_matches(
+                candidate_inventory,
+                progress=progress,
+                cancel_token=token,
+            )
+            matches.extend(fstec_db_matches)
+            diagnostics.extend(fstec_db_diagnostics)
         if self.fstec_client is not None:
             fstec_matches, fstec_diagnostics = self.fstec_client.match_inventory(
                 candidate_inventory,
@@ -570,6 +877,7 @@ class VulnerabilityCorrelator:
         inventory: list[InventoryObject],
         client: object,
         token: CancellationToken,
+        progress=None,
     ) -> VulnerabilityCorrelationResult | None:
         if not (hasattr(client, "resolve_cpe") and hasattr(client, "fetch_nvd_for_candidates")):
             return None
@@ -590,14 +898,17 @@ class VulnerabilityCorrelator:
         matches: list[VulnerabilityMatch] = []
         diagnostics: list[CollectorDiagnostic] = []
         coverage: dict[str, VulnerabilityCoverage] = {}
-        for group in grouped.values():
+        total_groups = len(grouped)
+        for index, group in enumerate(grouped.values(), 1):
             token.raise_if_cancelled()
+            if progress and (index == 1 or index == total_groups or index % 25 == 0):
+                progress(f"Local NVD/CPE database: {index}/{total_groups}")
             representative = group[0][1]
             resolution = client.resolve_cpe(representative)
             if resolution.status == "catalog_unavailable":
                 return None
             group_uids = [obj.uid for obj, _identity in group]
-            if resolution.status != "resolved":
+            if resolution.status not in {"resolved", "ambiguous"}:
                 if representative.object_type in self._direct_hardware_fallback_types() and hasattr(client, "fetch_nvd_for_object"):
                     records, source_diagnostics = client.fetch_nvd_for_object(group[0][0])
                     diagnostics.extend(source_diagnostics)
@@ -643,6 +954,18 @@ class VulnerabilityCorrelator:
 
             records, truncated, source_diagnostics = client.fetch_nvd_for_candidates(resolution.candidates)
             diagnostics.extend(source_diagnostics)
+            used_direct_fallback = False
+            if (
+                not records
+                and resolution.status == "ambiguous"
+                and hasattr(client, "fetch_nvd_for_object")
+                and representative.object_type in self._direct_affected_product_fallback_types()
+            ):
+                direct_records, direct_diagnostics = client.fetch_nvd_for_object(group[0][0])
+                diagnostics.extend(direct_diagnostics)
+                if direct_records:
+                    records = direct_records
+                    used_direct_fallback = True
             group_matches = self._matches_from_cpe_records(
                 records,
                 group,
@@ -650,18 +973,29 @@ class VulnerabilityCorrelator:
                 host_identities,
                 evaluator,
                 token,
-                fallback_cpe=resolution.candidates[0].cpe.uri,
+                fallback_cpe=resolution.candidates[0].cpe.uri if resolution.status == "resolved" else "",
             )
             matches.extend(group_matches)
+            coverage_state = "incomplete" if truncated else "complete"
+            coverage_reason = "query truncated" if truncated else "CPE candidates evaluated"
+            if used_direct_fallback:
+                coverage_reason = "direct NVD affected-product fallback evaluated"
+            if resolution.status == "ambiguous":
+                if not records:
+                    coverage_reason = "ambiguous CPE candidates evaluated, but no CVE records were found"
+                elif not used_direct_fallback:
+                    coverage_reason = "ambiguous CPE candidates evaluated"
+                if not records and not group_matches:
+                    coverage_state = "incomplete"
             for uid in group_uids:
                 coverage[uid] = self._coverage(
                     uid,
-                    "incomplete" if truncated else "complete",
+                    coverage_state,
                     resolution.status,
                     candidate_count=len(resolution.candidates),
                     evaluated_count=len(records),
                     truncated=truncated,
-                    reason="query truncated" if truncated else "CPE candidates evaluated",
+                    reason=coverage_reason,
                     trace={
                         "candidates": [candidate.cpe.uri for candidate in resolution.candidates],
                     },
@@ -731,6 +1065,17 @@ class VulnerabilityCorrelator:
             "network_adapter",
             "physical_disk",
             "processor",
+        }
+
+    @staticmethod
+    def _direct_affected_product_fallback_types() -> set[str]:
+        return {
+            "software",
+            "service",
+            "driver",
+            "odbc_driver",
+            "oledb_provider",
+            "operating_system",
         }
 
     @staticmethod

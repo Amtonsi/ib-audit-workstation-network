@@ -34,6 +34,8 @@ class UserGuidePdfTests(unittest.TestCase):
             "Открыть результат",
             "Перейти к риску",
             "Старые HTML-файлы не изменяются автоматически",
+            "audit DB создаётся временно",
+            "локальные XLSX ФСТЭК",
         )
         for text in expected:
             self.assertIn(text, usage_page)
@@ -50,13 +52,22 @@ class UserGuidePdfTests(unittest.TestCase):
         expected = (
             "CPE, версии и аппаратные риски",
             "производитель, название, модель и версия",
+            "псевдонимы и ребрендинг",
+            "Acronis Backup",
+            "Acronis Cyber Backup",
+            "несколько подходящих CPE-кандидатов",
+            "Критические находки отображаются только",
             "Подтверждено",
             "Потенциальный риск",
             "firmware/microcode",
             "--with-cpe-match",
+            "vullist.xlsx",
+            "АСУ ТП",
         )
         for text in expected:
             self.assertIn(text, vulnerability_page)
+        self.assertNotIn("DeltaV", vulnerability_page)
+        self.assertNotIn("12.03.0001", vulnerability_page)
 
 
 if __name__ == "__main__":

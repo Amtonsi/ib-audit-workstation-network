@@ -24,6 +24,23 @@ class InventoryIdentityResolverTests(unittest.TestCase):
         self.assertEqual("acronis", identity.vendor)
         self.assertEqual("acronis backup 11.7 agent core", identity.product)
         self.assertEqual("11.7.50058", identity.version)
+        self.assertIn("acronis cyber backup", identity.variants)
+
+    def test_deltav_identity_normalizes_legacy_vendor_and_embedded_product_version(self):
+        obj = InventoryObject(
+            "s",
+            "Installed Software",
+            "software",
+            "DeltaV_1231_CTRL_01_CSS",
+            {"Vendor": "Fisher-Rosemount Systems, Inc.", "Version": "1.00.000"},
+            "fixture",
+        )
+
+        identity = InventoryIdentityResolver().resolve(obj, [obj])
+
+        self.assertEqual("emerson", identity.vendor)
+        self.assertEqual("12.3.1", identity.version)
+        self.assertIn("deltav 12.3.1", identity.variants)
 
     def test_device_identity_reads_spaced_driver_version_and_pci_id(self):
         obj = InventoryObject(

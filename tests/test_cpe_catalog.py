@@ -63,6 +63,33 @@ class CpeCatalogTests(unittest.TestCase):
         self.assertEqual("acronis", resolution.candidates[0].cpe.vendor)
         self.assertEqual("cyber_backup", resolution.candidates[0].cpe.product)
 
+    def test_resolves_deltav_with_legacy_vendor_and_zero_padded_installed_version(self):
+        with self._catalog(
+            [
+                ("DELTAV-123", "cpe:2.3:a:emerson:deltav:12.3:*:*:*:*:*:*:*", "Emerson DeltaV 12.3"),
+                ("DELTAV-1231", "cpe:2.3:a:emerson:deltav:12.3.1:*:*:*:*:*:*:*", "Emerson DeltaV 12.3.1"),
+                ("DELTAV-133", "cpe:2.3:a:emerson:deltav:13.3:*:*:*:*:*:*:*", "Emerson DeltaV 13.3"),
+            ]
+        ) as db_path:
+            identity = InventoryIdentityResolver().resolve(
+                InventoryObject(
+                    "s",
+                    "Installed Software",
+                    "software",
+                    "DeltaV 12.3.1",
+                    {"Vendor": "Fisher-Rosemount Systems, Inc.", "Version": "12.03.0001"},
+                    "fixture",
+                ),
+                [],
+            )
+
+            resolution = CpeCatalog(db_path).resolve(identity)
+
+        self.assertEqual("resolved", resolution.status)
+        self.assertEqual("emerson", resolution.candidates[0].cpe.vendor)
+        self.assertEqual("deltav", resolution.candidates[0].cpe.product)
+        self.assertEqual("12.3.1", resolution.candidates[0].cpe.version)
+
     def test_resolves_processor_model_to_hardware_cpe(self):
         with self._catalog(
             [

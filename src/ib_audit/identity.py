@@ -59,12 +59,23 @@ def normalize_vendor(value: str) -> str:
         "ltd",
         "llc",
     )
-    tokens = [token for token in text.split() if token not in suffixes]
+    tokens = [token.strip(".") for token in text.split()]
+    tokens = [token for token in tokens if token and token not in suffixes]
+    normalized = " ".join(tokens)
+    if (
+        "fisher-rosemount" in tokens
+        or normalized.startswith("fisher rosemount")
+        or normalized.startswith("fisher-rosemount")
+        or normalized.startswith("rosemount")
+        or normalized.startswith("emerson process management")
+        or normalized.startswith("emerson electric")
+    ):
+        return "emerson"
     if "intel" in tokens:
         return "intel"
     if tokens[:3] == ["advanced", "micro", "devices"]:
         return "advanced micro devices"
-    return " ".join(tokens)
+    return normalized
 
 
 def normalize_product(value: str) -> str:
@@ -73,6 +84,33 @@ def normalize_product(value: str) -> str:
     text = re.sub(r"@\s*\d+(?:\.\d+)?\s*(?:ghz|mhz)", " ", text)
     text = re.sub(r"\b\d+(?:\.\d+)?\s*(?:ghz|mhz)\b", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def derive_product_version(object_type: str, product: str, installed_version: str) -> str:
+    if object_type != "software":
+        return installed_version
+    deltav_version = _deltav_version_from_text(product)
+    if deltav_version:
+        return deltav_version
+    return installed_version
+
+
+def _deltav_version_from_text(value: str) -> str:
+    text = normalize_product(value)
+    if "deltav" not in text:
+        return ""
+    dotted = re.search(r"\bdeltav\s+(\d{1,2})\.(\d{1,2})(?:\.(\d{1,2}))?\b", text)
+    if dotted:
+        major, minor, patch = dotted.groups()
+        parts = [str(int(major)), str(int(minor))]
+        if patch is not None:
+            parts.append(str(int(patch)))
+        return ".".join(parts)
+    packed = re.search(r"\bdeltav\s+(\d{4})\b", text)
+    if packed:
+        digits = packed.group(1)
+        return f"{int(digits[:2])}.{int(digits[2])}.{int(digits[3])}"
+    return ""
 
 
 def extract_model(object_type: str, product: str, fields: dict[str, object]) -> str:
@@ -133,6 +171,12 @@ def build_identity_variants(
             variants.append(value)
 
     add(product)
+    deltav_version = _deltav_version_from_text(product)
+    if deltav_version:
+        add(f"deltav {deltav_version}")
+    if vendor == "acronis" and "backup" in product:
+        add("acronis cyber backup")
+        add("cyber backup")
     if vendor and model:
         add(f"{vendor} {model.replace('_', ' ')}")
     if object_type == "processor" and model:
@@ -208,7 +252,7 @@ class InventoryIdentityResolver:
         mapping = self.FIELD_MAP.get(obj.object_type, self.FIELD_MAP["device"])
         vendor = normalize_vendor(first_value(obj.fields, mapping["vendor"]))
         product = normalize_product(first_value(obj.fields, mapping["product"]) or obj.title)
-        version = first_value(obj.fields, mapping["version"]).strip()
+        version = derive_product_version(obj.object_type, product, first_value(obj.fields, mapping["version"]).strip())
         model = extract_model(obj.object_type, product, obj.fields)
         hardware_ids = parse_hardware_ids(
             " ".join(

@@ -43,6 +43,22 @@ class RuleEngineTests(unittest.TestCase):
         self.assertEqual("passed", result.status)
         self.assertIn("StubPath", result.evidence)
 
+    def test_industrial_protocol_open_port_is_reported_as_risk(self):
+        obj = InventoryObject(
+            "ports",
+            "Open Ports",
+            "open_port",
+            "Modbus TCP",
+            {"Local Port": "502", "Local Address": "0.0.0.0", "Port Protocol": "TCP"},
+            "fixture",
+        )
+
+        result = next(item for item in self.engine.evaluate([obj], PROFILE) if item.rule_id == "EXP-ICS-001")
+
+        self.assertEqual("risk", result.status)
+        self.assertEqual("high", result.severity)
+        self.assertIn("industrial", result.title.casefold())
+
     def test_user_password_age_warns_after_60_days_and_critical_after_90_days(self):
         fresh = InventoryObject("users", "Users", "user", "fresh", {"PasswordAgeDays": "60"}, "fixture")
         stale = InventoryObject("users", "Users", "user", "stale", {"PasswordAgeDays": "61"}, "fixture")

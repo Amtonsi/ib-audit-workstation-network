@@ -158,6 +158,7 @@ def _enable_high_dpi_awareness() -> None:
 
 
 FSTEC_PROGRESS_RE = re.compile(r"(?:фстэк|фстек|fstec).*?(\d+)\s*/\s*(\d+)", re.IGNORECASE)
+NVD_CPE_PROGRESS_RE = re.compile(r"nvd\s*/\s*cpe.*?(\d+)\s*/\s*(\d+)", re.IGNORECASE)
 
 
 def presentation_for(state: str, text: str | None = None) -> WindowPresentation:
@@ -199,6 +200,10 @@ def format_database_update_status(result: dict[str, object]) -> str:
     stats = result.get("stats", {})
     if not isinstance(stats, dict):
         stats = {}
+    fstec_vulnerabilities = stats.get("fstec_vulnerabilities", stats.get("fstec_records", 0))
+    fstec_products = stats.get("fstec_products", 0)
+    fstec_errors = stats.get("fstec_import_errors", 0)
+    fstec_download_errors = stats.get("fstec_download_errors", 0)
     return (
         f"БД уязвимостей: {db_path.name} · "
         f"источников={stats.get('source_files', 0)} · "
@@ -206,7 +211,10 @@ def format_database_update_status(result: dict[str, object]) -> str:
         f"обновлено={stats.get('updated_sources', 0)} · "
         f"CPE Dictionary={stats.get('cpe_names', 0)} · "
         f"CPE Match={stats.get('cpe_match_criteria', 0)} · "
-        f"CPE generation={stats.get('active_cpe_generation', 0)}"
+        f"CPE generation={stats.get('active_cpe_generation', 0)} · "
+        f"FSTEC={fstec_vulnerabilities}/{fstec_products} · "
+        f"FSTEC XLSX errors={fstec_errors} · "
+        f"FSTEC download errors={fstec_download_errors}"
     )
 
 
@@ -223,8 +231,24 @@ def _fstec_progress_value(message: str, current: int) -> int | None:
     return max(current, min(95, mapped))
 
 
+def _nvd_cpe_progress_value(message: str, current: int) -> int | None:
+    match = NVD_CPE_PROGRESS_RE.search(message)
+    if not match:
+        return None
+    completed = int(match.group(1))
+    total = int(match.group(2))
+    if total <= 0:
+        return current
+    ratio = max(0.0, min(completed / total, 1.0))
+    mapped = int(round(85 + ratio * 5))
+    return max(current, min(90, mapped))
+
+
 def progress_status_for_message(message: str) -> str | None:
     lowered = message.casefold()
+    nvd_cpe_match = NVD_CPE_PROGRESS_RE.search(message)
+    if nvd_cpe_match:
+        return f"Прогресс: NVD/CPE {nvd_cpe_match.group(1)}/{nvd_cpe_match.group(2)}"
     match = FSTEC_PROGRESS_RE.search(message)
     if match:
         return f"Прогресс: ФСТЭК БДУ {match.group(1)}/{match.group(2)}"
@@ -284,6 +308,9 @@ def progress_value_for_message(message: str, current: int) -> int:
         return max(current, 80)
     if "assessing vulnerabilities" in lowered:
         return max(current, 85)
+    nvd_cpe_progress = _nvd_cpe_progress_value(message, current)
+    if nvd_cpe_progress is not None:
+        return nvd_cpe_progress
     fstec_progress = _fstec_progress_value(message, current)
     if fstec_progress is not None:
         return fstec_progress
@@ -751,7 +778,7 @@ class AuditWindow:
     ) -> None:
         try:
             result = run_audit(
-                db_path=self.db_path.get(),
+                db_path=None,
                 output_dir=self.output_dir.get(),
                 online_sources=online_sources,
                 vulnerability_mode=vulnerability_mode,
@@ -779,7 +806,7 @@ class AuditWindow:
         try:
             result = analyze_reports(
                 source_reports,
-                db_path=self.db_path.get(),
+                db_path=None,
                 output_dir=self.output_dir.get(),
                 open_report=False,
                 progress=self.messages.put,

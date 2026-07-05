@@ -128,6 +128,52 @@ class CommandRunnerTests(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertTrue(update_database.call_args.kwargs["include_cpe_match"])
 
+    def test_update_database_script_passes_fstec_xlsx_sources(self):
+        module = self._load_update_database_script()
+        result = {
+            "db_path": Path("C:/outputs/vulnerability_sources.db"),
+            "snapshot_dir": Path("C:/outputs/snapshots"),
+            "stats": {
+                "mode": "incremental",
+                "reused_sources": 0,
+                "updated_sources": 1,
+                "source_files": 1,
+                "cpe_names": 0,
+                "cpe_match_criteria": 0,
+                "active_cpe_generation": 0,
+                "fstec_vulnerabilities": 7,
+                "fstec_products": 9,
+                "fstec_import_errors": 2,
+                "fstec_download_errors": 3,
+            },
+        }
+        argv = [
+            "update_vulnerability_database.py",
+            "--output",
+            "C:/outputs",
+            "--fstec-asutp-xlsx",
+            "J:/asutp.xlsx",
+            "--fstec-xlsx",
+            "C:/downloads/vullist.xlsx",
+        ]
+        stdout = io.StringIO()
+
+        with patch.object(module, "update_vulnerability_database", return_value=result) as update_database, \
+                patch.object(sys, "argv", argv), \
+                contextlib.redirect_stdout(stdout):
+            exit_code = module.main()
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            [("fstec-asutp", Path("J:/asutp.xlsx")), ("fstec-bdu", Path("C:/downloads/vullist.xlsx"))],
+            update_database.call_args.kwargs["fstec_xlsx_paths"],
+        )
+        output = stdout.getvalue()
+        self.assertIn("FSTEC vulnerabilities: 7", output)
+        self.assertIn("FSTEC products: 9", output)
+        self.assertIn("FSTEC XLSX import errors: 2", output)
+        self.assertIn("FSTEC XLSX download errors: 3", output)
+
     @staticmethod
     def _load_update_database_script():
         script = Path("scripts/update_vulnerability_database.py").resolve()
