@@ -909,7 +909,7 @@ class VulnerabilityCorrelator:
                 return None
             group_uids = [obj.uid for obj, _identity in group]
             if resolution.status not in {"resolved", "ambiguous"}:
-                if representative.object_type in self._direct_hardware_fallback_types() and hasattr(client, "fetch_nvd_for_object"):
+                if representative.object_type in self._direct_affected_product_fallback_types() and hasattr(client, "fetch_nvd_for_object"):
                     records, source_diagnostics = client.fetch_nvd_for_object(group[0][0])
                     diagnostics.extend(source_diagnostics)
                     group_matches = self._matches_from_cpe_records(
@@ -957,7 +957,6 @@ class VulnerabilityCorrelator:
             used_direct_fallback = False
             if (
                 not records
-                and resolution.status == "ambiguous"
                 and hasattr(client, "fetch_nvd_for_object")
                 and representative.object_type in self._direct_affected_product_fallback_types()
             ):

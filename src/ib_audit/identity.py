@@ -61,6 +61,8 @@ def normalize_vendor(value: str) -> str:
     )
     tokens = [token.strip(".") for token in text.split()]
     tokens = [token for token in tokens if token and token not in suffixes]
+    if len(tokens) > 1 and tokens[-1] == "project":
+        tokens = tokens[:-1]
     normalized = " ".join(tokens)
     if (
         "fisher-rosemount" in tokens

@@ -954,6 +954,45 @@ class VulnerabilityCorrelatorTests(unittest.TestCase):
         self.assertEqual("confirmed", result.matches[0].applicability)
         self.assertEqual("complete", result.coverage[software.uid].state)
 
+    def test_cpe_not_found_software_falls_back_to_affected_products(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            nmap_cpe = "cpe:2.3:a:nmap:nmap:*:*:*:*:*:*:*:*"
+            db_path = self._build_cpe_enabled_database(
+                root,
+                cpes=[],
+                cves=[
+                    self._cve(
+                        "CVE-2099-58058",
+                        nmap_cpe,
+                        version_end_including="7.99",
+                    ),
+                    self._cve(
+                        "CVE-2099-15173",
+                        nmap_cpe,
+                        version_end_including="7.70",
+                    ),
+                ],
+            )
+            software = InventoryObject(
+                "s",
+                "Installed Software",
+                "software",
+                "Nmap 7.91",
+                {"Name": "Nmap 7.91", "Vendor": "Nmap Project", "Version": "7.91"},
+                "fixture",
+            )
+
+            result = VulnerabilityCorrelator(
+                source_client=VulnerabilityDatabaseSourceClient(db_path)
+            ).enrich_from_sources([software])
+
+        self.assertEqual(["CVE-2099-58058"], [item.cve for item in result.matches])
+        self.assertEqual("confirmed", result.matches[0].applicability)
+        self.assertEqual("complete", result.coverage[software.uid].state)
+        self.assertEqual("not_found", result.coverage[software.uid].cpe_status)
+        self.assertGreaterEqual(result.coverage[software.uid].evaluated_count, 1)
+
     @staticmethod
     def _insert_fstec_fixture(
         db_path: Path,
@@ -1060,9 +1099,12 @@ class VulnerabilityCorrelatorTests(unittest.TestCase):
         cve_id: str,
         criteria: str,
         *,
+        version_end_including: str = "",
         version_end_excluding: str = "",
     ) -> dict:
         cpe_match = {"vulnerable": True, "criteria": criteria}
+        if version_end_including:
+            cpe_match["versionEndIncluding"] = version_end_including
         if version_end_excluding:
             cpe_match["versionEndExcluding"] = version_end_excluding
         return {
