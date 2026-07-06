@@ -684,6 +684,14 @@ class VulnerabilityDatabaseSourceClient:
         return "LOW"
 
     @staticmethod
+    def _generic_remediation(obj: InventoryObject) -> str:
+        if obj.object_type in {"service", "open_port"}:
+            return "Update the owning product, restrict exposure with firewall rules, or disable the service if it is not required."
+        if obj.category_id == "s":
+            return "Update the affected software to a fixed version or remove it if it is not required."
+        return "Apply vendor security updates and verify the finding manually."
+
+    @staticmethod
     def _version_tuple(value: str) -> tuple[int, ...] | None:
         match = re.search(r"\d+(?:[._-]\d+)*", value)
         if not match:

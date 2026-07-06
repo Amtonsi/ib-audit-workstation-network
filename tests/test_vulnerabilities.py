@@ -637,6 +637,41 @@ class VulnerabilityCorrelatorTests(unittest.TestCase):
         self.assertEqual(1, query.call_count)
         self.assertEqual({first.uid, second.uid}, {match.object_uid for match in matches})
 
+    def test_local_fstec_empty_remediation_uses_generic_recommendation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            db_path = root / "vulnerability_sources.db"
+            VulnerabilityDatabaseBuilder(root / "snapshots", db_path).build_database([])
+            self._insert_fstec_fixture(
+                db_path,
+                code="BDA:2026-160",
+                severity_text="РЎСЂРµРґРЅРёР№ СѓСЂРѕРІРµРЅСЊ РѕРїР°СЃРЅРѕСЃС‚Рё",
+                cvss=6.1,
+                product="Example Tool",
+                version_expression="-",
+            )
+            con = sqlite3.connect(db_path)
+            try:
+                con.execute(
+                    "update fstec_vulnerabilities set remediation='' where source='fstec-asutp' and code='BDA:2026-160'"
+                )
+                con.commit()
+            finally:
+                con.close()
+            software = InventoryObject(
+                "s",
+                "Installed Software",
+                "software",
+                "Example Tool",
+                {"Name": "Example Tool", "Version": "1.5"},
+                "fixture",
+            )
+
+            matches, _diagnostics = VulnerabilityDatabaseSourceClient(db_path).fetch_fstec_matches([software])
+
+        self.assertEqual(1, len(matches))
+        self.assertIn("fixed version", matches[0].remediation)
+
     def test_database_candidate_fetch_deduplicates_same_product_key(self):
         class FakeRow(dict):
             def __getitem__(self, key):
