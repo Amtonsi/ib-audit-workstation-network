@@ -1,75 +1,103 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="720" viewBox="0 0 1180 720" role="img" aria-labelledby="title desc">
-  <title id="title">Синтетический макет главного окна IB Audit Workstation</title>
-  <desc id="desc">Схема интерфейса без реальных данных аудита</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="760" viewBox="0 0 1180 760" role="img" aria-labelledby="title desc">
+  <title id="title">Синтетический макет главного окна IB Audit Workstation Network Edition</title>
+  <desc id="desc">Схема интерфейса с блоком сетевой проверки и кнопкой Команды сети. Реальных данных аудита нет.</desc>
   <defs>
     <style>
       .bg{fill:#f3f6f8}.header{fill:#172126}.panel{fill:#fff}.rail{fill:#fff}.muted{fill:#62727a}.text{fill:#172126}
       .title{font:700 28px Segoe UI,Arial,sans-serif;fill:#fff}.small{font:400 14px Segoe UI,Arial,sans-serif}
       .label{font:600 17px Segoe UI,Arial,sans-serif;fill:#172126}.tiny{font:400 12px Segoe UI,Arial,sans-serif}
-      .button{fill:#0f766e}.button2{fill:#edf2f4}.line{stroke:#dce3e7;stroke-width:1}.credit{font:400 14px Segoe UI,Arial,sans-serif;fill:#62727a}
-      .callout{fill:#fff7ed;stroke:#fdba74;stroke-width:2}.badge{fill:#e8f0ff}.danger{fill:#fee2e2}.ok{fill:#dcfce7}
+      .button{fill:#0f766e}.button2{fill:#edf2f4}.line{stroke:#dce3e7;stroke-width:1}
+      .credit{font:400 14px Segoe UI,Arial,sans-serif;fill:#62727a}.callout{fill:#fff7ed;stroke:#fdba74;stroke-width:2}
+      .badge{fill:#e8f0ff}.violet{fill:#f0edff}.fstec{fill:#fff1e7}.input{fill:#f7f9fa;stroke:#9ca3af}
+      .check{fill:#0f766e}.ghost{fill:#ffffff;stroke:#94a3b8}.network{fill:#ecfeff;stroke:#67e8f9;stroke-width:2}
     </style>
   </defs>
-  <rect class="bg" x="0" y="0" width="1180" height="720"/>
-  <rect class="header" x="0" y="0" width="1180" height="118"/>
-  <text class="title" x="32" y="55">IB Audit Workstation</text>
-  <text class="small" x="32" y="84" fill="#b8c4c9">Рабочая станция специалиста информационной безопасности</text>
-  <rect x="990" y="34" width="138" height="44" rx="2" fill="#0f766e"/>
-  <text class="tiny" x="1020" y="61" fill="#fff" font-weight="700">Готово</text>
+  <rect class="bg" width="1180" height="760"/>
+  <rect class="header" width="1180" height="112"/>
+  <text class="title" x="32" y="52">IB Audit Workstation Network Edition</text>
+  <text class="small" x="32" y="82" fill="#b8c4c9">Локальный аудит, HTML-отчёты и включаемая сетевая проверка</text>
+  <rect x="992" y="34" width="138" height="42" rx="3" fill="#0f766e"/>
+  <text class="tiny" x="1020" y="60" fill="#fff" font-weight="700">Готово</text>
 
-  <rect class="rail" x="0" y="118" width="306" height="552"/>
-  <text class="tiny" x="22" y="160" fill="#62727a" font-weight="700">НОВЫЙ АНАЛИЗ</text>
-  <rect class="button" x="22" y="180" width="254" height="46" rx="0"/>
-  <text class="small" x="62" y="210" fill="#fff" font-weight="700">Полный аудит компьютера</text>
-  <rect class="button2" x="22" y="238" width="254" height="46"/>
-  <text class="small text" x="58" y="268" font-weight="700">Проверить HTML-отчёты</text>
-  <rect class="button2" x="22" y="296" width="254" height="46"/>
-  <text class="small text" x="78" y="326" font-weight="700">Обновить базы</text>
-  <rect class="button2" x="22" y="354" width="254" height="46"/>
-  <text class="small muted" x="102" y="384">Отменить</text>
-  <line class="line" x1="22" y1="426" x2="276" y2="426"/>
-  <text class="tiny" x="22" y="470" fill="#62727a" font-weight="700">РЕЗУЛЬТАТЫ</text>
-  <rect class="button2" x="22" y="490" width="254" height="46"/>
-  <text class="small text" x="56" y="520" font-weight="700">Открыть последний отчёт</text>
-  <text class="tiny muted" x="22" y="620">Локальная обработка инвентаризации.</text>
-  <text class="tiny muted" x="22" y="642">Сетевые запросы только к выбранным</text>
-  <text class="tiny muted" x="22" y="664">источникам уязвимостей.</text>
+  <rect class="rail" x="0" y="112" width="306" height="598"/>
+  <text class="tiny" x="22" y="152" fill="#62727a" font-weight="700">НОВЫЙ АНАЛИЗ</text>
+  <rect class="button" x="22" y="172" width="254" height="44" rx="2"/>
+  <text class="small" x="56" y="200" fill="#fff" font-weight="700">Полный аудит компьютера</text>
+  <rect class="button2" x="22" y="228" width="254" height="44"/>
+  <text class="small text" x="58" y="256" font-weight="700">Проверить HTML-отчёты</text>
+  <rect class="button2" x="22" y="284" width="254" height="44"/>
+  <text class="small text" x="78" y="312" font-weight="700">Обновить базы</text>
+  <rect class="button2" x="22" y="340" width="254" height="44"/>
+  <text class="small muted" x="102" y="368">Отменить</text>
+  <line class="line" x1="22" y1="412" x2="276" y2="412"/>
+  <text class="tiny" x="22" y="454" fill="#62727a" font-weight="700">РЕЗУЛЬТАТЫ</text>
+  <rect class="button2" x="22" y="474" width="254" height="44"/>
+  <text class="small text" x="54" y="502" font-weight="700">Открыть последний отчёт</text>
+  <rect class="button2" x="22" y="530" width="254" height="44"/>
+  <text class="small text" x="64" y="558" font-weight="700">Открыть папку отчётов</text>
+  <text class="tiny muted" x="22" y="642">Сетевое сканирование выключено</text>
+  <text class="tiny muted" x="22" y="664">по умолчанию и запускается только</text>
+  <text class="tiny muted" x="22" y="686">по явному выбору пользователя.</text>
 
-  <g transform="translate(334 142)">
-    <rect class="panel" width="804" height="66"/>
-    <text class="label" x="20" y="38">Источники проверки</text>
-    <rect class="badge" x="218" y="17" width="80" height="34"/>
-    <text class="tiny" x="235" y="39" fill="#2563eb" font-weight="700">CISA KEV</text>
-    <rect x="312" y="17" width="58" height="34" fill="#f0edff"/>
-    <text class="tiny" x="330" y="39" fill="#6d4aff" font-weight="700">NVD</text>
-    <rect x="384" y="17" width="94" height="34" fill="#fff1e7"/>
-    <text class="tiny" x="406" y="39" fill="#b45309" font-weight="700">ФСТЭК</text>
-  </g>
-  <g transform="translate(334 224)">
-    <rect class="panel" width="804" height="66"/>
-    <text class="label" x="20" y="38">Режим проверки уязвимостей</text>
-    <circle cx="306" cy="33" r="6" fill="#fff" stroke="#888"/>
-    <text class="tiny text" x="320" y="38">Полный онлайн ФСТЭК</text>
-    <circle cx="484" cy="33" r="6" fill="#172126"/>
-    <text class="tiny text" x="498" y="38">Быстро: кэш NVD/CISA</text>
-  </g>
-  <g transform="translate(334 306)">
-    <rect class="panel" width="804" height="98"/>
-    <text class="label" x="20" y="36">Папка отчётов</text>
-    <rect x="20" y="52" width="764" height="30" fill="#f7f9fa" stroke="#9ca3af"/>
-    <text class="tiny muted" x="32" y="72">outputs</text>
-  </g>
-  <g transform="translate(334 420)">
-    <rect class="panel" width="804" height="210"/>
-    <text class="label" x="20" y="36">Журнал выполнения</text>
-    <text class="tiny muted" x="20" y="72">Прогресс: ожидание</text>
-    <rect x="20" y="88" width="764" height="18" fill="#dde6e8"/>
-    <rect x="20" y="88" width="424" height="18" fill="#0f766e"/>
-    <rect x="20" y="122" width="764" height="68" fill="#f8fafb"/>
-    <text class="tiny muted" x="34" y="148">Running collector: system_hardware</text>
-    <text class="tiny muted" x="34" y="170">Assessing vulnerabilities...</text>
+  <g transform="translate(334 134)">
+    <rect class="panel" width="804" height="58"/>
+    <text class="label" x="20" y="35">Источники проверки</text>
+    <rect class="badge" x="210" y="14" width="82" height="30"/>
+    <text class="tiny" x="226" y="34" fill="#2563eb" font-weight="700">CISA KEV</text>
+    <rect class="violet" x="306" y="14" width="58" height="30"/>
+    <text class="tiny" x="324" y="34" fill="#6d4aff" font-weight="700">NVD</text>
+    <rect class="fstec" x="378" y="14" width="94" height="30"/>
+    <text class="tiny" x="400" y="34" fill="#b45309" font-weight="700">ФСТЭК</text>
   </g>
 
-  <rect class="callout" x="766" y="652" width="372" height="42" rx="8"/>
-  <text class="credit" x="790" y="678">Разработал: Абдрахманов Амаль Даулетович</text>
+  <g transform="translate(334 206)">
+    <rect class="panel" width="804" height="58"/>
+    <text class="label" x="20" y="35">Режим проверки уязвимостей</text>
+    <circle class="ghost" cx="310" cy="29" r="6"/>
+    <text class="tiny text" x="324" y="34">Полный онлайн ФСТЭК</text>
+    <circle class="check" cx="498" cy="29" r="6"/>
+    <text class="tiny text" x="512" y="34">Быстро: кэш NVD/CISA</text>
+  </g>
+
+  <g transform="translate(334 278)">
+    <rect class="network" width="804" height="122" rx="4"/>
+    <text class="label" x="20" y="34">Сетевая проверка</text>
+    <circle class="check" cx="186" cy="29" r="7"/>
+    <text class="tiny text" x="202" y="34">Включить Nmap</text>
+    <circle class="ghost" cx="330" cy="29" r="7"/>
+    <text class="tiny text" x="346" y="34">Захват трафика</text>
+    <rect class="button2" x="638" y="12" width="138" height="34" rx="4"/>
+    <text class="tiny text" x="670" y="34" font-weight="700">Команды сети</text>
+    <text class="tiny muted" x="20" y="72">Цели</text>
+    <rect class="input" x="68" y="54" width="708" height="30"/>
+    <text class="tiny muted" x="82" y="74">192.168.0.0/24, host.example.local</text>
+    <text class="tiny muted" x="20" y="108">Порты</text>
+    <rect class="input" x="68" y="90" width="170" height="24"/>
+    <text class="tiny muted" x="82" y="107">1-65535</text>
+    <text class="tiny muted" x="262" y="108">Nmap args</text>
+    <rect class="input" x="336" y="90" width="218" height="24"/>
+    <text class="tiny muted" x="348" y="107">--min-rate 50</text>
+    <text class="tiny muted" x="576" y="108">Интерфейс / сек</text>
+    <rect class="input" x="676" y="90" width="100" height="24"/>
+    <text class="tiny muted" x="690" y="107">3 / 20</text>
+  </g>
+
+  <g transform="translate(334 414)">
+    <rect class="panel" width="804" height="82"/>
+    <text class="label" x="20" y="34">Папка отчётов</text>
+    <rect class="input" x="20" y="48" width="764" height="24"/>
+    <text class="tiny muted" x="32" y="65">outputs</text>
+  </g>
+
+  <g transform="translate(334 510)">
+    <rect class="panel" width="804" height="146"/>
+    <text class="label" x="20" y="34">Журнал выполнения</text>
+    <text class="tiny muted" x="20" y="66">Прогресс: ожидание</text>
+    <rect x="20" y="82" width="764" height="16" fill="#dde6e8"/>
+    <rect x="20" y="82" width="424" height="16" fill="#0f766e"/>
+    <text class="tiny muted" x="32" y="126">Network scan disabled by default. Command profile is applied only when enabled.</text>
+  </g>
+
+  <rect class="callout" x="760" y="694" width="378" height="42" rx="8"/>
+  <text class="credit" x="782" y="720">Разработал: Абдрахманов Амаль Даулетович</text>
 </svg>

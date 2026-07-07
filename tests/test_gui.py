@@ -427,6 +427,73 @@ class AuditWindowReportImportTests(unittest.TestCase):
         )
         thread.start.assert_called_once()
 
+    @patch("ib_audit.gui_tk.threading.Thread")
+    def test_start_passes_network_command_profile_when_enabled(self, thread_factory):
+        window = self._window()
+        window._ensure_network_state()
+        window.network_scan_enabled.set(True)
+        window.network_capture_enabled.set(True)
+        window.network_targets.set("192.168.56.0/24")
+        window.network_ports.set("80,443")
+        window.network_extra_args.set("--min-rate 50")
+        window.network_capture_interface.set("3")
+        window.network_capture_duration.set("15")
+        window.network_capture_filter.set("tcp port 443")
+        window.network_nmap_os_detection.set(False)
+        window.network_nmap_open_only.set(False)
+
+        window._start(True)
+
+        args = thread_factory.call_args.kwargs["args"]
+        self.assertEqual((True, "full", window.active_cancel_token), args[:3])
+        config = args[3]
+        self.assertTrue(config.enabled)
+        self.assertTrue(config.capture_enabled)
+        self.assertEqual(("192.168.56.0/24",), config.targets)
+        self.assertEqual("80,443", config.ports)
+        self.assertEqual("--min-rate 50", config.extra_args)
+        self.assertEqual("3", config.capture_interface)
+        self.assertEqual(15, config.capture_duration)
+        self.assertEqual("tcp port 443", config.capture_filter)
+        self.assertFalse(config.nmap_os_detection)
+        self.assertFalse(config.nmap_open_only)
+        thread_factory.return_value.start.assert_called_once()
+
+    def test_network_command_window_controls_are_present(self):
+        root = FakeWidget(kind="Root")
+        window = AuditWindow.__new__(AuditWindow)
+        window.root = root
+        window.output_dir = FakeVar("C:/outputs")
+        window.source_status = FakeVar("кэш источников: проверяется при аудите")
+        window.progress_status = FakeVar("Прогресс: ожидание")
+        window.vulnerability_mode = FakeVar("full")
+        window.status = FakeVar()
+        window.action_buttons = []
+        window.active_cancel_token = None
+        window._log = Mock()
+
+        def widget_factory(kind):
+            return lambda parent=None, **options: FakeWidget(parent=parent, kind=kind, **options)
+
+        with patch("ib_audit.gui_tk.ttk.Frame", widget_factory("Frame")), \
+                patch("ib_audit.gui_tk.ttk.Label", widget_factory("Label")), \
+                patch("ib_audit.gui_tk.ttk.Button", widget_factory("Button")), \
+                patch("ib_audit.gui_tk.ttk.Checkbutton", widget_factory("Checkbutton")), \
+                patch("ib_audit.gui_tk.ttk.Entry", widget_factory("Entry")), \
+                patch("ib_audit.gui_tk.ttk.Radiobutton", widget_factory("Radiobutton")), \
+                patch("ib_audit.gui_tk.ttk.Separator", widget_factory("Separator")), \
+                patch("ib_audit.gui_tk.ttk.Progressbar", widget_factory("Progressbar")), \
+                patch("ib_audit.gui_tk.scrolledtext.ScrolledText", widget_factory("ScrolledText")):
+            window._build()
+
+        def descendants(widget):
+            for child in widget.children:
+                yield child
+                yield from descendants(child)
+
+        buttons = [child for child in descendants(root) if child.kind == "Button"]
+        self.assertTrue(any(button.options.get("text") == "Команды сети" for button in buttons))
+
     @patch("ib_audit.gui_tk.analyze_reports")
     def test_batch_analysis_result_becomes_last_report(self, analyze_reports):
         window = self._window()

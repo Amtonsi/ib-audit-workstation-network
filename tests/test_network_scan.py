@@ -4,10 +4,75 @@ import unittest
 
 sys.path.insert(0, os.path.abspath("src"))
 
-from ib_audit.network_scan import _parse_nmap_xml, _parse_tshark_csv
+from ib_audit.network_scan import (
+    NETWORK_COMMAND_OPTIONS,
+    NetworkScanConfig,
+    _parse_nmap_xml,
+    _parse_tshark_csv,
+    build_nmap_command,
+    build_tshark_command,
+)
 
 
 class NetworkScanParserTests(unittest.TestCase):
+    def test_nmap_command_builder_respects_enabled_options(self):
+        config = NetworkScanConfig(
+            enabled=True,
+            ports="80,443",
+            extra_args="--min-rate 50",
+            nmap_no_dns=False,
+            nmap_skip_host_discovery=False,
+            nmap_open_only=False,
+            nmap_timing="T4",
+            nmap_os_detection=False,
+            nmap_service_detection=True,
+        )
+
+        command = build_nmap_command(config, ["192.168.56.0/24"])
+
+        self.assertEqual("nmap", command[0])
+        self.assertNotIn("-n", command)
+        self.assertNotIn("-Pn", command)
+        self.assertNotIn("-open", command)
+        self.assertNotIn("-O", command)
+        self.assertIn("-T4", command)
+        self.assertIn("-sV", command)
+        self.assertIn("--min-rate", command)
+        self.assertIn("50", command)
+        self.assertEqual("192.168.56.0/24", command[-1])
+
+    def test_tshark_command_builder_respects_capture_options(self):
+        config = NetworkScanConfig(
+            enabled=True,
+            capture_enabled=True,
+            capture_duration=15,
+            capture_filter="tcp port 443",
+            capture_no_name_resolution=False,
+            capture_quiet=False,
+        )
+
+        command = build_tshark_command(config, "3")
+
+        self.assertEqual("tshark", command[0])
+        self.assertNotIn("-n", command)
+        self.assertNotIn("-q", command)
+        self.assertIn("duration:15", command)
+        self.assertIn("-f", command)
+        self.assertIn("tcp port 443", command)
+        self.assertIn("ip.src", command)
+        self.assertIn("frame.len", command)
+
+    def test_network_command_options_have_russian_tooltips(self):
+        option_ids = {item.id for item in NETWORK_COMMAND_OPTIONS}
+
+        self.assertIn("nmap_service_detection", option_ids)
+        self.assertIn("nmap_os_detection", option_ids)
+        self.assertIn("capture_no_name_resolution", option_ids)
+        for item in NETWORK_COMMAND_OPTIONS:
+            self.assertTrue(item.label)
+            self.assertTrue(item.description_ru)
+            self.assertTrue(item.command_preview)
+
     def test_nmap_parser_keeps_only_open_services_with_product_context(self):
         xml = """<?xml version="1.0"?>
 <nmaprun>

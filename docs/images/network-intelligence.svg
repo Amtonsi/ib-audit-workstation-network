@@ -1,61 +1,71 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="520" viewBox="0 0 1120 520" role="img" aria-labelledby="title desc">
-  <title id="title">Network intelligence report section</title>
-  <desc id="desc">Synthetic diagram showing optional Nmap service discovery, tshark traffic capture, vulnerability matching, and the final HTML network intelligence section.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="620" viewBox="0 0 1180 620" role="img" aria-labelledby="title desc">
+  <title id="title">Окно настройки сетевых команд</title>
+  <desc id="desc">Синтетическая схема настройки Nmap и tshark без реальных сетевых данных.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L0,6 L9,3 z" fill="#2563eb"/>
     </marker>
     <style>
-      .bg{fill:#f8fafc}.panel{fill:#fff;stroke:#d8dee9;stroke-width:2}.dark{fill:#111827}.title{font:700 28px Segoe UI,Arial,sans-serif;fill:#111827}.label{font:600 16px Segoe UI,Arial,sans-serif;fill:#111827}.small{font:13px Segoe UI,Arial,sans-serif;fill:#475569}.muted{font:12px Segoe UI,Arial,sans-serif;fill:#64748b}.chip{fill:#eef2ff;stroke:#c7d2fe}.ok{fill:#dcfce7;stroke:#86efac}.warn{fill:#ffedd5;stroke:#fdba74}.risk{fill:#fee2e2;stroke:#fca5a5}.line{stroke:#2563eb;stroke-width:3;fill:none;marker-end:url(#arrow)}
+      .bg{fill:#f8fafc}.panel{fill:#fff;stroke:#d8dee9;stroke-width:2}.dark{fill:#111827}
+      .title{font:700 28px Segoe UI,Arial,sans-serif;fill:#111827}.label{font:600 16px Segoe UI,Arial,sans-serif;fill:#111827}
+      .small{font:13px Segoe UI,Arial,sans-serif;fill:#475569}.muted{font:12px Segoe UI,Arial,sans-serif;fill:#64748b}
+      .chip{fill:#eef2ff;stroke:#c7d2fe}.ok{fill:#dcfce7;stroke:#86efac}.warn{fill:#ffedd5;stroke:#fdba74}
+      .risk{fill:#fee2e2;stroke:#fca5a5}.line{stroke:#2563eb;stroke-width:3;fill:none;marker-end:url(#arrow)}
+      .check{fill:#0f766e}.input{fill:#f8fafc;stroke:#cbd5e1}.tooltip{fill:#172126}
     </style>
   </defs>
-  <rect class="bg" width="1120" height="520" rx="18"/>
-  <text class="title" x="40" y="58">Optional Network Intelligence</text>
-  <text class="small" x="40" y="84">No real hosts, IP addresses, logs, or audit results are shown in this diagram.</text>
+  <rect class="bg" width="1180" height="620" rx="18"/>
+  <text class="title" x="40" y="56">Network Edition: включаемый сетевой модуль</text>
+  <text class="small" x="40" y="84">Все элементы на схеме синтетические: нет реальных IP, имён компьютеров, логов и результатов аудита.</text>
 
-  <rect class="panel" x="40" y="125" width="220" height="245" rx="10"/>
-  <text class="label" x="66" y="162">Operator toggles</text>
-  <rect class="ok" x="66" y="190" width="160" height="36" rx="18"/>
-  <text class="small" x="88" y="213">Nmap scan ON</text>
-  <rect class="warn" x="66" y="242" width="160" height="36" rx="18"/>
-  <text class="small" x="82" y="265">Capture optional</text>
-  <text class="muted" x="66" y="310">Targets: local CIDR or explicit hosts</text>
-  <text class="muted" x="66" y="334">Ports: 1-65535 or custom list</text>
+  <rect class="panel" x="40" y="122" width="250" height="190" rx="12"/>
+  <text class="label" x="66" y="160">Главное окно</text>
+  <rect class="ok" x="66" y="186" width="150" height="34" rx="17"/>
+  <circle class="check" cx="84" cy="203" r="7"/>
+  <text class="small" x="100" y="208">Включить Nmap</text>
+  <rect class="warn" x="66" y="232" width="168" height="34" rx="17"/>
+  <circle class="check" cx="84" cy="249" r="7"/>
+  <text class="small" x="100" y="254">Захват трафика</text>
+  <rect class="chip" x="66" y="278" width="142" height="34" rx="17"/>
+  <text class="small" x="92" y="300">Команды сети</text>
 
-  <path class="line" d="M260 248 H350"/>
+  <path class="line" d="M290 218 H350"/>
 
-  <rect class="panel" x="350" y="110" width="240" height="130" rx="10"/>
-  <text class="label" x="380" y="146">Nmap XML</text>
-  <text class="small" x="380" y="176">Open ports only</text>
-  <text class="small" x="380" y="200">Service, product, version, CPE</text>
-  <text class="small" x="380" y="224">OS guess when available</text>
+  <rect class="panel" x="350" y="108" width="330" height="260" rx="12"/>
+  <text class="label" x="378" y="146">Окно «Команды сети»</text>
+  <rect class="input" x="378" y="170" width="274" height="30" rx="6"/>
+  <text class="muted" x="392" y="190">Цели: 192.168.0.0/24</text>
+  <rect class="input" x="378" y="210" width="274" height="30" rx="6"/>
+  <text class="muted" x="392" y="230">Порты: 1-65535</text>
+  <text class="small" x="378" y="270">☑ -n  Не выполнять DNS-разрешение</text>
+  <text class="small" x="378" y="296">☑ -Pn Считать цели доступными</text>
+  <text class="small" x="378" y="322">☑ -sV Определять сервисы и версии</text>
+  <text class="small" x="378" y="348">☐ -O  Определять ОС хоста</text>
+  <rect class="tooltip" x="408" y="384" width="328" height="54" rx="8"/>
+  <text x="426" y="407" font-family="Segoe UI,Arial,sans-serif" font-size="12" fill="#fff">Подсказка при наведении:</text>
+  <text x="426" y="427" font-family="Segoe UI,Arial,sans-serif" font-size="12" fill="#d1d5db">что делает выбранный ключ на русском языке</text>
 
-  <rect class="panel" x="350" y="282" width="240" height="130" rx="10"/>
-  <text class="label" x="380" y="318">tshark capture</text>
-  <text class="small" x="380" y="348">Source and destination</text>
-  <text class="small" x="380" y="372">Ports, protocol, packets, bytes</text>
-  <text class="small" x="380" y="396">Best-effort local process</text>
+  <path class="line" d="M680 232 H750"/>
 
-  <path class="line" d="M590 175 H700"/>
-  <path class="line" d="M590 347 H700"/>
+  <rect class="panel" x="750" y="108" width="360" height="144" rx="12"/>
+  <text class="label" x="778" y="144">Nmap command</text>
+  <text class="small" x="778" y="174">nmap -n -Pn -T2 -open -oX -</text>
+  <text class="small" x="778" y="198">-p &lt;ports&gt; -sV [-O] &lt;extra&gt; &lt;targets&gt;</text>
+  <text class="muted" x="778" y="226">XML разбирается в открытые сервисы, CPE и ОС</text>
 
-  <rect class="panel" x="700" y="160" width="210" height="185" rx="10"/>
-  <text class="label" x="730" y="198">Correlation</text>
-  <rect class="chip" x="730" y="224" width="138" height="30" rx="15"/>
-  <text class="muted" x="754" y="244">CISA / NVD</text>
-  <rect class="chip" x="730" y="264" width="138" height="30" rx="15"/>
-  <text class="muted" x="756" y="284">FSTEC BDU</text>
-  <rect class="risk" x="730" y="304" width="138" height="30" rx="15"/>
-  <text class="muted" x="760" y="324">Risk links</text>
+  <rect class="panel" x="750" y="280" width="360" height="158" rx="12"/>
+  <text class="label" x="778" y="316">tshark/Wireshark command</text>
+  <text class="small" x="778" y="346">tshark -i &lt;interface&gt; -n -q</text>
+  <text class="small" x="778" y="370">-a duration:&lt;sec&gt; -T fields ... [-f filter]</text>
+  <text class="muted" x="778" y="398">CSV агрегируется в потоки, пакеты, байты и порты</text>
+  <text class="muted" x="778" y="420">Локальные TCP-порты связываются с процессами</text>
 
-  <path class="line" d="M910 252 H985"/>
+  <path class="line" d="M930 438 V496 H1010"/>
+  <path class="line" d="M930 252 V496 H1010"/>
 
-  <rect class="dark" x="985" y="110" width="95" height="300" rx="10"/>
-  <text x="1008" y="148" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="700" fill="#fff">HTML</text>
-  <text x="1002" y="184" font-family="Segoe UI,Arial,sans-serif" font-size="12" fill="#d1d5db">Open</text>
-  <text x="1002" y="204" font-family="Segoe UI,Arial,sans-serif" font-size="12" fill="#d1d5db">services</text>
-  <text x="1002" y="246" font-family="Segoe UI,Arial,sans-serif" font-size="12" fill="#d1d5db">Traffic</text>
-  <text x="1002" y="266" font-family="Segoe UI,Arial,sans-serif" font-size="12" fill="#d1d5db">flows</text>
-  <text x="1002" y="308" font-family="Segoe UI,Arial,sans-serif" font-size="12" fill="#d1d5db">CVE/BDU</text>
-  <text x="1002" y="328" font-family="Segoe UI,Arial,sans-serif" font-size="12" fill="#d1d5db">links</text>
+  <rect class="dark" x="1010" y="456" width="120" height="118" rx="12"/>
+  <text x="1034" y="490" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="700" fill="#fff">HTML</text>
+  <text x="1026" y="520" font-family="Segoe UI,Arial,sans-serif" font-size="12" fill="#d1d5db">Open services</text>
+  <text x="1026" y="544" font-family="Segoe UI,Arial,sans-serif" font-size="12" fill="#d1d5db">Traffic flows</text>
+  <text x="1026" y="568" font-family="Segoe UI,Arial,sans-serif" font-size="12" fill="#d1d5db">CVE/BDU links</text>
 </svg>

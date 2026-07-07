@@ -26,6 +26,10 @@ class NetworkScanConfig:
     ports: str = "1-65535"
     extra_args: str = ""
     nmap_timeout: int = 600
+    nmap_no_dns: bool = True
+    nmap_skip_host_discovery: bool = True
+    nmap_timing: str = "T2"
+    nmap_open_only: bool = True
     nmap_os_detection: bool = True
     nmap_service_detection: bool = True
     capture_enabled: bool = False
@@ -33,6 +37,18 @@ class NetworkScanConfig:
     capture_duration: int = 20
     capture_timeout: int = 130
     capture_filter: str = ""
+    capture_no_name_resolution: bool = True
+    capture_quiet: bool = True
+
+
+@dataclass(frozen=True)
+class NetworkCommandOption:
+    id: str
+    group: str
+    label: str
+    command_preview: str
+    description_ru: str
+    config_field: str
 
 
 @dataclass(frozen=True)
@@ -42,12 +58,141 @@ class NetworkScanService:
     fields: dict[str, str]
 
 
+NETWORK_COMMAND_OPTIONS = (
+    NetworkCommandOption(
+        "nmap_no_dns",
+        "nmap",
+        "Не выполнять DNS-разрешение",
+        "-n",
+        "Отключает обратное DNS-разрешение. Сканирование обычно быстрее, в отчёте остаются IP-адреса без попытки получить имена.",
+        "nmap_no_dns",
+    ),
+    NetworkCommandOption(
+        "nmap_skip_host_discovery",
+        "nmap",
+        "Считать цели доступными",
+        "-Pn",
+        "Пропускает ping/host discovery и проверяет цели как доступные. Полезно, если ICMP блокируется firewall.",
+        "nmap_skip_host_discovery",
+    ),
+    NetworkCommandOption(
+        "nmap_open_only",
+        "nmap",
+        "Показывать только открытые порты",
+        "-open",
+        "Оставляет в XML только открытые порты, чтобы отчёт не раздувался закрытыми и отфильтрованными портами.",
+        "nmap_open_only",
+    ),
+    NetworkCommandOption(
+        "nmap_service_detection",
+        "nmap",
+        "Определять сервисы и версии",
+        "-sV",
+        "Пытается определить сервис, продукт и версию. Эти данные используются для поиска уязвимостей.",
+        "nmap_service_detection",
+    ),
+    NetworkCommandOption(
+        "nmap_os_detection",
+        "nmap",
+        "Определять ОС хоста",
+        "-O",
+        "Пытается определить операционную систему удалённого узла. Может требовать прав администратора и занимать больше времени.",
+        "nmap_os_detection",
+    ),
+    NetworkCommandOption(
+        "capture_no_name_resolution",
+        "tshark",
+        "Не выполнять разрешение имён",
+        "-n",
+        "Отключает DNS/сервисное разрешение имён при захвате, чтобы не создавать лишний сетевой шум и ускорить обработку.",
+        "capture_no_name_resolution",
+    ),
+    NetworkCommandOption(
+        "capture_quiet",
+        "tshark",
+        "Тихий режим захвата",
+        "-q",
+        "Убирает интерактивную статистику tshark из вывода. В отчёт попадают только выбранные поля пакетов.",
+        "capture_quiet",
+    ),
+)
+
+
+TSHARK_FIELDS = [
+    "frame.time_epoch",
+    "ip.src",
+    "ip.dst",
+    "tcp.srcport",
+    "tcp.dstport",
+    "udp.srcport",
+    "udp.dstport",
+    "_ws.col.Protocol",
+    "frame.len",
+]
+
+
 def _diagnostic(message: str, source: str = "nmap / tshark") -> CollectorDiagnostic:
     return CollectorDiagnostic("network_scan", "info", message, source)
 
 
 def _warning(message: str, source: str = "nmap / tshark") -> CollectorDiagnostic:
     return CollectorDiagnostic("network_scan", "warning", message, source)
+
+
+def build_nmap_command(config: NetworkScanConfig, targets: list[str]) -> list[str]:
+    command = ["nmap"]
+    if config.nmap_no_dns:
+        command.append("-n")
+    if config.nmap_skip_host_discovery:
+        command.append("-Pn")
+    timing = str(config.nmap_timing or "").strip()
+    if timing:
+        command.append(timing if timing.startswith("-") else f"-{timing}")
+    if config.nmap_open_only:
+        command.append("-open")
+    command.extend(["-oX", "-", "-p", _normalize_ports(config.ports)])
+    if config.nmap_service_detection:
+        command.append("-sV")
+    if config.nmap_os_detection:
+        command.append("-O")
+    if config.extra_args:
+        try:
+            command.extend(shlex.split(config.extra_args))
+        except ValueError:
+            command.extend(config.extra_args.split())
+    command.extend(targets)
+    return command
+
+
+def build_tshark_command(
+    config: NetworkScanConfig,
+    interface: str,
+    fields: list[str] | None = None,
+) -> list[str]:
+    selected_fields = list(fields or TSHARK_FIELDS)
+    command = ["tshark", "-i", interface]
+    if config.capture_no_name_resolution:
+        command.append("-n")
+    if config.capture_quiet:
+        command.append("-q")
+    command.extend(
+        [
+            "-a",
+            f"duration:{max(1, _parse_int(config.capture_duration, 20))}",
+            "-T",
+            "fields",
+            "-E",
+            "separator=,",
+            "-E",
+            "quote=d",
+            "-E",
+            "header=y",
+        ]
+    )
+    command.extend(item for field in selected_fields for item in ("-e", field))
+    if config.capture_filter:
+        command.extend(["-f", config.capture_filter])
+    return command
 
 
 def parse_local_network_targets(
@@ -188,27 +333,7 @@ def collect_network_services(
     targets = parse_local_network_targets(config.targets)
     if not targets:
         return [], [_warning("No network targets discovered")]
-    command = [
-        "nmap",
-        "-n",
-        "-Pn",
-        "-T2",
-        "-open",
-        "-oX",
-        "-",
-        "-p",
-        _normalize_ports(config.ports),
-    ]
-    if config.nmap_service_detection:
-        command.append("-sV")
-    if config.nmap_os_detection:
-        command.append("-O")
-    if config.extra_args:
-        try:
-            command.extend(shlex.split(config.extra_args))
-        except ValueError:
-            command.extend(config.extra_args.split())
-    command.extend(targets)
+    command = build_nmap_command(config, targets)
     result = run_command(command, timeout=max(60, int(config.nmap_timeout)))
     if not result.ok:
         return [], [_warning(f"Nmap execution failed: {result.stderr or result.stdout}")]
@@ -338,37 +463,8 @@ def collect_network_capture(
             interface = candidates[0]["name"]
         else:
             return [], [_warning("tshark interfaces are not available")]
-    fields = [
-        "frame.time_epoch",
-        "ip.src",
-        "ip.dst",
-        "tcp.srcport",
-        "tcp.dstport",
-        "udp.srcport",
-        "udp.dstport",
-        "_ws.col.Protocol",
-        "frame.len",
-    ]
-    command = [
-        "tshark",
-        "-i",
-        interface,
-        "-n",
-        "-q",
-        "-a",
-        f"duration:{max(1, _parse_int(config.capture_duration, 20))}",
-        "-T",
-        "fields",
-        "-E",
-        "separator=,",
-        "-E",
-        "quote=d",
-        "-E",
-        "header=y",
-        *[item for field in fields for item in ("-e", field)],
-    ]
-    if config.capture_filter:
-        command.extend(["-f", config.capture_filter])
+    fields = list(TSHARK_FIELDS)
+    command = build_tshark_command(config, interface, fields)
     result = run_command(command, timeout=max(5, _parse_int(config.capture_timeout, 120)))
     if not result.ok:
         return [], [_warning(f"tshark execution failed: {result.stderr or result.stdout}")]
@@ -638,8 +734,12 @@ def collect_network_intelligence(
 
 
 __all__ = [
+    "NETWORK_COMMAND_OPTIONS",
     "NetworkScanConfig",
+    "NetworkCommandOption",
     "NetworkScanService",
+    "build_nmap_command",
+    "build_tshark_command",
     "collect_network_intelligence",
     "collect_network_capture",
     "collect_network_services",

@@ -7,7 +7,7 @@ import threading
 import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import BOTH, END, LEFT, RIGHT, X, Y, BooleanVar, StringVar, Tk, filedialog, messagebox, scrolledtext, ttk
+from tkinter import BOTH, END, LEFT, RIGHT, X, Y, BooleanVar, StringVar, Tk, Toplevel, filedialog, messagebox, scrolledtext, ttk
 
 from .app import (
     VULNERABILITY_MODE_FAST,
@@ -20,7 +20,7 @@ from .app import (
 from .batch import BatchProgress
 from .cancellation import AuditCancelled, CancellationToken
 from .models import SourceSnapshot
-from .network_scan import NetworkScanConfig
+from .network_scan import NETWORK_COMMAND_OPTIONS, NetworkScanConfig
 
 
 SOURCE_LABELS = ("CISA KEV", "NVD", "ФСТЭК БДУ")
@@ -87,6 +87,52 @@ class _FallbackVar:
 
     def set(self, value: object) -> None:
         self.value = value
+
+
+class _Tooltip:
+    def __init__(self, widget: object, text: str) -> None:
+        self.widget = widget
+        self.text = text
+        self.popup: Toplevel | None = None
+        if not text or not hasattr(widget, "bind"):
+            return
+        try:
+            widget.bind("<Enter>", self._show)
+            widget.bind("<Leave>", self._hide)
+            widget.bind("<ButtonPress>", self._hide)
+        except Exception:
+            return
+
+    def _show(self, _event: object | None = None) -> None:
+        if self.popup is not None:
+            return
+        try:
+            x = int(self.widget.winfo_rootx()) + 18  # type: ignore[attr-defined]
+            y = int(self.widget.winfo_rooty()) + int(self.widget.winfo_height()) + 8  # type: ignore[attr-defined]
+            self.popup = Toplevel(self.widget)  # type: ignore[arg-type]
+            self.popup.wm_overrideredirect(True)
+            self.popup.wm_geometry(f"+{x}+{y}")
+            label = ttk.Label(
+                self.popup,
+                text=self.text,
+                justify="left",
+                wraplength=420,
+                background="#172126",
+                foreground="#FFFFFF",
+                padding=(10, 8),
+            )
+            label.pack()
+        except Exception:
+            self.popup = None
+
+    def _hide(self, _event: object | None = None) -> None:
+        if self.popup is None:
+            return
+        try:
+            self.popup.destroy()
+        except Exception:
+            pass
+        self.popup = None
 
 
 def _safe_screen_value(value: int, fallback: int) -> int:
@@ -356,6 +402,15 @@ class AuditWindow:
         self.network_extra_args = StringVar(value="")
         self.network_capture_interface = StringVar(value="")
         self.network_capture_duration = StringVar(value="20")
+        self.network_capture_filter = StringVar(value="")
+        self.network_nmap_no_dns = BooleanVar(value=True)
+        self.network_nmap_skip_host_discovery = BooleanVar(value=True)
+        self.network_nmap_timing = StringVar(value="T2")
+        self.network_nmap_open_only = BooleanVar(value=True)
+        self.network_nmap_os_detection = BooleanVar(value=True)
+        self.network_nmap_service_detection = BooleanVar(value=True)
+        self.network_capture_no_name_resolution = BooleanVar(value=True)
+        self.network_capture_quiet = BooleanVar(value=True)
         self.last_report: str | None = None
         self.messages: queue.Queue[object] = queue.Queue()
         self.action_buttons: list[ttk.Button] = []
@@ -640,32 +695,44 @@ class AuditWindow:
         network_panel.pack(fill=X, pady=(0, 12))
         network_header = ttk.Frame(network_panel, style="Panel.TFrame")
         network_header.pack(fill=X, pady=(0, 8))
-        ttk.Label(network_header, text="Network scan", style="Section.TLabel").pack(side=LEFT)
+        ttk.Label(network_header, text="Сетевая проверка", style="Section.TLabel").pack(side=LEFT)
         ttk.Checkbutton(
             network_header,
-            text="Nmap full scan",
+            text="Включить Nmap",
             variable=self.network_scan_enabled,
             style="Mode.TCheckbutton",
         ).pack(side=LEFT, padx=(18, 8))
         ttk.Checkbutton(
             network_header,
-            text="Traffic capture (tshark/Wireshark)",
+            text="Захват трафика",
             variable=self.network_capture_enabled,
             style="Mode.TCheckbutton",
         ).pack(side=LEFT, padx=(8, 0))
+        command_button = ttk.Button(
+            network_header,
+            text="Команды сети",
+            command=self._open_network_commands,
+            style="Quiet.TButton",
+            cursor="hand2",
+        )
+        command_button.pack(side=RIGHT)
+        _Tooltip(
+            command_button,
+            "Открывает окно выбора nmap/tshark-команд, дополнительных аргументов и фильтра захвата.",
+        )
         network_targets_row = ttk.Frame(network_panel, style="Panel.TFrame")
         network_targets_row.pack(fill=X, pady=(0, 8))
-        ttk.Label(network_targets_row, text="Targets", style="Muted.TLabel").pack(side=LEFT)
+        ttk.Label(network_targets_row, text="Цели", style="Muted.TLabel").pack(side=LEFT)
         ttk.Entry(network_targets_row, textvariable=self.network_targets).pack(side=LEFT, fill=X, expand=True, padx=(12, 0))
         network_options_row = ttk.Frame(network_panel, style="Panel.TFrame")
         network_options_row.pack(fill=X)
-        ttk.Label(network_options_row, text="Ports", style="Muted.TLabel").pack(side=LEFT)
+        ttk.Label(network_options_row, text="Порты", style="Muted.TLabel").pack(side=LEFT)
         ttk.Entry(network_options_row, textvariable=self.network_ports, width=18).pack(side=LEFT, padx=(12, 14))
         ttk.Label(network_options_row, text="Nmap args", style="Muted.TLabel").pack(side=LEFT)
         ttk.Entry(network_options_row, textvariable=self.network_extra_args).pack(side=LEFT, fill=X, expand=True, padx=(12, 14))
-        ttk.Label(network_options_row, text="Interface", style="Muted.TLabel").pack(side=LEFT)
+        ttk.Label(network_options_row, text="Интерфейс", style="Muted.TLabel").pack(side=LEFT)
         ttk.Entry(network_options_row, textvariable=self.network_capture_interface, width=12).pack(side=LEFT, padx=(12, 14))
-        ttk.Label(network_options_row, text="Sec", style="Muted.TLabel").pack(side=LEFT)
+        ttk.Label(network_options_row, text="Сек", style="Muted.TLabel").pack(side=LEFT)
         ttk.Entry(network_options_row, textvariable=self.network_capture_duration, width=6).pack(side=LEFT, padx=(8, 0))
 
         output_panel = ttk.Frame(workspace, style="Panel.TFrame", padding=(16, 13))
@@ -752,6 +819,116 @@ class AuditWindow:
         ensure("network_extra_args", "")
         ensure("network_capture_interface", "")
         ensure("network_capture_duration", "20")
+        ensure("network_capture_filter", "")
+        ensure("network_nmap_no_dns", True, boolean=True)
+        ensure("network_nmap_skip_host_discovery", True, boolean=True)
+        ensure("network_nmap_timing", "T2")
+        ensure("network_nmap_open_only", True, boolean=True)
+        ensure("network_nmap_os_detection", True, boolean=True)
+        ensure("network_nmap_service_detection", True, boolean=True)
+        ensure("network_capture_no_name_resolution", True, boolean=True)
+        ensure("network_capture_quiet", True, boolean=True)
+
+    def _network_option_var(self, config_field: str) -> object:
+        self._ensure_network_state()
+        variable_name = f"network_{config_field}"
+        return getattr(self, variable_name)
+
+    def _network_bool_value(self, variable_name: str, default: bool = False) -> bool:
+        self._ensure_network_state()
+        variable = getattr(self, variable_name, None)
+        if variable is None:
+            return default
+        try:
+            return bool(variable.get())
+        except Exception:
+            return default
+
+    def _network_string_value(self, variable_name: str, default: str = "") -> str:
+        self._ensure_network_state()
+        variable = getattr(self, variable_name, None)
+        if variable is None:
+            return default
+        try:
+            return str(variable.get()).strip()
+        except Exception:
+            return default
+
+    def _open_network_commands(self) -> None:
+        self._ensure_network_state()
+        dialog = Toplevel(self.root)
+        dialog.title("Команды сетевой проверки")
+        dialog.geometry("760x640")
+        dialog.minsize(680, 520)
+        dialog.configure(background=COLORS["canvas"])
+        container = ttk.Frame(dialog, style="Panel.TFrame", padding=(18, 16))
+        container.pack(fill=BOTH, expand=True)
+        ttk.Label(
+            container,
+            text="Профиль Nmap и tshark/Wireshark",
+            style="Section.TLabel",
+        ).pack(anchor="w", pady=(0, 6))
+        ttk.Label(
+            container,
+            text=(
+                "Отметьте команды, которые нужно использовать при сетевой проверке. "
+                "Подсказка по каждой команде доступна при наведении мыши."
+            ),
+            style="Muted.TLabel",
+            wraplength=700,
+            justify="left",
+        ).pack(anchor="w", pady=(0, 14))
+        self._build_network_command_group(container, "Nmap: обнаружение узлов, портов, сервисов и ОС", "nmap")
+        self._build_network_command_group(container, "tshark/Wireshark: захват и агрегация трафика", "tshark")
+        self._build_network_command_entries(container)
+        ttk.Button(
+            container,
+            text="Закрыть",
+            command=dialog.destroy,
+            style="Secondary.TButton",
+            cursor="hand2",
+        ).pack(anchor="e", pady=(14, 0))
+
+    def _build_network_command_group(self, parent: object, title: str, group: str) -> None:
+        frame = ttk.Frame(parent, style="Panel.TFrame")
+        frame.pack(fill=X, pady=(0, 10))
+        ttk.Label(frame, text=title, style="Body.TLabel").pack(anchor="w", pady=(0, 5))
+        for option in NETWORK_COMMAND_OPTIONS:
+            if option.group != group:
+                continue
+            row = ttk.Frame(frame, style="Panel.TFrame")
+            row.pack(fill=X, pady=2)
+            check = ttk.Checkbutton(
+                row,
+                text=f"{option.command_preview} — {option.label}",
+                variable=self._network_option_var(option.config_field),
+                style="Mode.TCheckbutton",
+            )
+            check.pack(side=LEFT, fill=X, expand=True)
+            _Tooltip(check, option.description_ru)
+
+    def _build_network_command_entries(self, parent: object) -> None:
+        frame = ttk.Frame(parent, style="Panel.TFrame")
+        frame.pack(fill=X, pady=(4, 0))
+        ttk.Label(frame, text="Параметры команд", style="Body.TLabel").pack(anchor="w", pady=(0, 6))
+        rows = (
+            ("Цели Nmap", self.network_targets, "Например: 192.168.1.0/24, 10.10.10.5 или имя узла."),
+            ("Порты Nmap", self.network_ports, "Например: 1-65535, 80,443,3389 или T:1-1024,U:53."),
+            ("Профиль скорости", self.network_nmap_timing, "Значение nmap -T0..-T5. По умолчанию T2 — осторожный режим."),
+            ("Доп. аргументы Nmap", self.network_extra_args, "Аргументы добавляются в конец nmap-команды перед целями."),
+            ("Интерфейс tshark", self.network_capture_interface, "Номер интерфейса из tshark -D. Если пусто, программа попробует выбрать первый доступный."),
+            ("Длительность захвата, сек", self.network_capture_duration, "Ограничение tshark через -a duration:<секунды>."),
+            ("Фильтр захвата", self.network_capture_filter, "BPF-фильтр tshark -f, например: tcp port 443 или host 192.168.1.10."),
+        )
+        for label_text, variable, tooltip in rows:
+            row = ttk.Frame(frame, style="Panel.TFrame")
+            row.pack(fill=X, pady=3)
+            label = ttk.Label(row, text=label_text, style="Muted.TLabel", width=24)
+            label.pack(side=LEFT)
+            entry = ttk.Entry(row, textvariable=variable)
+            entry.pack(side=LEFT, fill=X, expand=True, padx=(10, 0))
+            _Tooltip(label, tooltip)
+            _Tooltip(entry, tooltip)
 
     def _on_root_configure(self, event: object) -> None:
         root = getattr(self, "root", None)
@@ -853,28 +1030,36 @@ class AuditWindow:
         return VULNERABILITY_MODE_FULL
 
     def _selected_network_scan_config(self) -> NetworkScanConfig | None:
-        if not hasattr(self, "network_scan_enabled") or not hasattr(self, "network_capture_enabled"):
-            return None
-        enabled = bool(self.network_scan_enabled.get() or self.network_capture_enabled.get())
+        self._ensure_network_state()
+        enabled = self._network_bool_value("network_scan_enabled") or self._network_bool_value("network_capture_enabled")
         if not enabled:
             return None
         targets = tuple(
             item.strip()
-            for item in self.network_targets.get().replace(";", ",").split(",")
+            for item in self._network_string_value("network_targets").replace(";", ",").split(",")
             if item.strip()
         )
         try:
-            capture_duration = int(self.network_capture_duration.get() or "20")
+            capture_duration = int(self._network_string_value("network_capture_duration", "20") or "20")
         except ValueError:
             capture_duration = 20
         return NetworkScanConfig(
             enabled=True,
             targets=targets,
-            ports=self.network_ports.get().strip() or "1-65535",
-            extra_args=self.network_extra_args.get().strip(),
-            capture_enabled=bool(self.network_capture_enabled.get()),
-            capture_interface=self.network_capture_interface.get().strip() or None,
+            ports=self._network_string_value("network_ports", "1-65535") or "1-65535",
+            extra_args=self._network_string_value("network_extra_args"),
+            nmap_no_dns=self._network_bool_value("network_nmap_no_dns", True),
+            nmap_skip_host_discovery=self._network_bool_value("network_nmap_skip_host_discovery", True),
+            nmap_timing=self._network_string_value("network_nmap_timing", "T2") or "T2",
+            nmap_open_only=self._network_bool_value("network_nmap_open_only", True),
+            nmap_os_detection=self._network_bool_value("network_nmap_os_detection", True),
+            nmap_service_detection=self._network_bool_value("network_nmap_service_detection", True),
+            capture_enabled=self._network_bool_value("network_capture_enabled"),
+            capture_interface=self._network_string_value("network_capture_interface") or None,
             capture_duration=max(1, capture_duration),
+            capture_filter=self._network_string_value("network_capture_filter"),
+            capture_no_name_resolution=self._network_bool_value("network_capture_no_name_resolution", True),
+            capture_quiet=self._network_bool_value("network_capture_quiet", True),
         )
 
     def _run_background(
