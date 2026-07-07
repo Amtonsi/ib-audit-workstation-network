@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="520" viewBox="0 0 1120 520" role="img" aria-labelledby="title desc">
+  <title id="title">Network intelligence report section</title>
+  <desc id="desc">Synthetic diagram showing optional Nmap service discovery, tshark traffic capture, vulnerability matching, and the final HTML network intelligence section.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#2563eb"/>
+    </marker>
+    <style>
+      .bg{fill:#f8fafc}.panel{fill:#fff;stroke:#d8dee9;stroke-width:2}.dark{fill:#111827}.title{font:700 28px Segoe UI,Arial,sans-serif;fill:#111827}.label{font:600 16px Segoe UI,Arial,sans-serif;fill:#111827}.small{font:13px Segoe UI,Arial,sans-serif;fill:#475569}.muted{font:12px Segoe UI,Arial,sans-serif;fill:#64748b}.chip{fill:#eef2ff;stroke:#c7d2fe}.ok{fill:#dcfce7;stroke:#86efac}.warn{fill:#ffedd5;stroke:#fdba74}.risk{fill:#fee2e2;stroke:#fca5a5}.line{stroke:#2563eb;stroke-width:3;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect class="bg" width="1120" height="520" rx="18"/>
+  <text class="title" x="40" y="58">Optional Network Intelligence</text>
+  <text class="small" x="40" y="84">No real hosts, IP addresses, logs, or audit results are shown in this diagram.</text>
+
+  <rect class="panel" x="40" y="125" width="220" height="245" rx="10"/>
+  <text class="label" x="66" y="162">Operator toggles</text>
+  <rect class="ok" x="66" y="190" width="160" height="36" rx="18"/>
+  <text class="small" x="88" y="213">Nmap scan ON</text>
+  <rect class="warn" x="66" y="242" width="160" height="36" rx="18"/>
+  <text class="small" x="82" y="265">Capture optional</text>
+  <text class="muted" x="66" y="310">Targets: local CIDR or explicit hosts</text>
+  <text class="muted" x="66" y="334">Ports: 1-65535 or custom list</text>
+
+  <path class="line" d="M260 248 H350"/>
+
+  <rect class="panel" x="350" y="110" width="240" height="130" rx="10"/>
+  <text class="label" x="380" y="146">Nmap XML</text>
+  <text class="small" x="380" y="176">Open ports only</text>
+  <text class="small" x="380" y="200">Service, product, version, CPE</text>
+  <text class="small" x="380" y="224">OS guess when available</text>
+
+  <rect class="panel" x="350" y="282" width="240" height="130" rx="10"/>
+  <text class="label" x="380" y="318">tshark capture</text>
+  <text class="small" x="380" y="348">Source and destination</text>
+  <text class="small" x="380" y="372">Ports, protocol, packets, bytes</text>
+  <text class="small" x="380" y="396">Best-effort local process</text>
+
+  <path class="line" d="M590 175 H700"/>
+  <path class="line" d="M590 347 H700"/>
+
+  <rect class="panel" x="700" y="160" width="210" height="185" rx="10"/>
+  <text class="label" x="730" y="198">Correlation</text>
+  <rect class="chip" x="730" y="224" width="138" height="30" rx="15"/>
+  <text class="muted" x="754" y="244">CISA / NVD</text>
+  <rect class="chip" x="730" y="264" width="138" height="30" rx="15"/>
+  <text class="muted" x="756" y="284">FSTEC BDU</text>
+  <rect class="risk" x="730" y="304" width="138" height="30" rx="15"/>
+  <text class="muted" x="760" y="324">Risk links</text>
+
+  <path class="line" d="M910 252 H985"/>
+
+  <rect class="dark" x="985" y="110" width="95" height="300" rx="10"/>
+  <text x="1008" y="148" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="700" fill="#fff">HTML</text>
+  <text x="1002" y="184" font-family="Segoe UI,Arial,sans-serif" font-size="12" fill="#d1d5db">Open</text>
+  <text x="1002" y="204" font-family="Segoe UI,Arial,sans-serif" font-size="12" fill="#d1d5db">services</text>
+  <text x="1002" y="246" font-family="Segoe UI,Arial,sans-serif" font-size="12" fill="#d1d5db">Traffic</text>
+  <text x="1002" y="266" font-family="Segoe UI,Arial,sans-serif" font-size="12" fill="#d1d5db">flows</text>
+  <text x="1002" y="308" font-family="Segoe UI,Arial,sans-serif" font-size="12" fill="#d1d5db">CVE/BDU</text>
+  <text x="1002" y="328" font-family="Segoe UI,Arial,sans-serif" font-size="12" fill="#d1d5db">links</text>
+</svg>

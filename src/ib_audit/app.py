@@ -33,6 +33,7 @@ from .vulnerability_database import (
     VulnerabilityDatabaseBuilder,
     find_vulnerability_database,
 )
+from .network_scan import NetworkScanConfig
 
 
 VULNERABILITY_MODE_FULL = "full"
@@ -363,6 +364,7 @@ def run_audit(
     enrich: bool = False,
     online_sources: bool = True,
     vulnerability_mode: str = VULNERABILITY_MODE_FULL,
+    network_scan: NetworkScanConfig | None = None,
     open_report: bool = False,
     progress=None,
     cancel_token: CancellationToken | None = None,
@@ -372,7 +374,12 @@ def run_audit(
     output.mkdir(parents=True, exist_ok=True)
     db, db_label, _temp_db = _audit_database_path(db_path)
     repo = SQLiteRepository(db)
-    engine = AuditEngine(repo, progress=progress, cancel_token=token)
+    engine = AuditEngine(
+        repo,
+        progress=progress,
+        cancel_token=token,
+        network_scan_config=network_scan,
+    )
     run, inventory, diagnostics = engine.run()
     if progress:
         progress("Assessing vulnerabilities, configuration, and exposure")

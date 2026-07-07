@@ -66,6 +66,24 @@ class CompleteNoMatchCorrelator:
         )
 
 
+class NetworkServiceCompleteCorrelator:
+    used_snapshots = []
+    candidate_types = {"network_service"}
+
+    def enrich_from_sources(self, inventory, progress=None, cancel_token=None):
+        obj = inventory[0]
+        return VulnerabilityCorrelationResult(
+            [],
+            [],
+            {
+                obj.uid: VulnerabilityCoverage(
+                    obj.uid, "complete", "resolved", ("NVD",), 1, 1, False,
+                    "CPE candidates evaluated",
+                )
+            },
+        )
+
+
 class PotentialHardwareCorrelator:
     used_snapshots = []
     candidate_types = {"processor"}
@@ -163,6 +181,27 @@ class AssessmentServiceTests(unittest.TestCase):
         bundle = AssessmentService(correlator=CompleteNoMatchCorrelator()).assess([software])
 
         self.assertEqual("passed", bundle.assessments[0].status)
+
+    def test_network_service_is_covered_by_vulnerability_assessment(self):
+        service = InventoryObject(
+            "N",
+            "Network Service Discovery",
+            "network_service",
+            "192.168.1.20 443/TCP nginx",
+            {
+                "Service Product": "nginx",
+                "Service Version": "1.18.0",
+                "Port": "443",
+                "Protocol": "TCP",
+            },
+            "nmap",
+        )
+
+        bundle = AssessmentService(correlator=NetworkServiceCompleteCorrelator()).assess([service])
+
+        self.assertEqual("passed", bundle.assessments[0].status)
+        coverage_rule = next(item for item in bundle.rule_results if item.rule_id == "VULN-COVERAGE")
+        self.assertEqual("passed", coverage_rule.status)
 
     def test_potential_hardware_match_is_risk(self):
         processor = InventoryObject(

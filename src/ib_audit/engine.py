@@ -12,6 +12,7 @@ from .models import AuditRun, CollectorDiagnostic, InventoryObject, utc_now
 from .normalization import detect_windows_profile
 from .repository import SQLiteRepository
 from .security_collectors import ensure_category_diagnostics
+from .network_scan import NetworkScanConfig
 
 
 ProgressCallback = Callable[[str], None]
@@ -23,10 +24,12 @@ class AuditEngine:
         repository: SQLiteRepository,
         progress: ProgressCallback | None = None,
         cancel_token: CancellationToken | None = None,
+        network_scan_config: NetworkScanConfig | None = None,
     ):
         self.repository = repository
         self.progress = progress or (lambda message: None)
         self.cancel_token = cancel_token or CancellationToken()
+        self.network_scan_config = network_scan_config
 
     def run(self) -> tuple[AuditRun, list[InventoryObject], list[CollectorDiagnostic]]:
         run = AuditRun.create(socket.gethostname(), is_admin())
@@ -35,7 +38,7 @@ class AuditEngine:
         diagnostics: list[CollectorDiagnostic] = []
         self.progress(f"Audit started for {run.hostname}; admin={run.is_admin}")
         try:
-            for collector in get_collectors():
+            for collector in get_collectors(self.network_scan_config):
                 self.cancel_token.raise_if_cancelled()
                 start = time.perf_counter()
                 self.progress(f"Running collector: {collector.name}")

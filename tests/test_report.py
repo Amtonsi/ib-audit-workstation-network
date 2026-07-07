@@ -108,6 +108,53 @@ class HtmlReportBuilderTests(unittest.TestCase):
         self.assertIn("data-category='Startup Programs'", html)
         self.assertIn("function applyFilters()", html)
 
+    def test_report_renders_network_intelligence_matrix(self):
+        run = AuditRun.create("TEST-PC", True)
+        service = InventoryObject(
+            "N",
+            "Network Service Discovery",
+            "network_service",
+            "192.168.1.20 443/TCP https nginx",
+            {
+                "Host IP": "192.168.1.20",
+                "Host Name": "web-node",
+                "Port": "443",
+                "Protocol": "TCP",
+                "State": "open",
+                "Service": "https",
+                "Service Product": "nginx",
+                "Service Version": "1.18.0",
+            },
+            "nmap",
+        )
+        flow = InventoryObject(
+            "N",
+            "Network Traffic Capture",
+            "network_capture",
+            "192.168.1.10:51515 -> 192.168.1.20:443 (TLS)",
+            {
+                "Source": "192.168.1.10",
+                "Destination": "192.168.1.20",
+                "Protocol": "TLS",
+                "Source Port": "51515",
+                "Destination Port": "443",
+                "Packets": "15",
+                "Bytes": "4200",
+                "Direction": "internal",
+                "Destination Scope": "private",
+            },
+            "tshark",
+        )
+
+        html = HtmlReportBuilder().render(run, [service, flow], [], self._assessment([service, flow]))
+
+        self.assertIn("Network Intelligence", html)
+        self.assertIn("Open services", html)
+        self.assertIn("Traffic flows", html)
+        self.assertIn("192.168.1.10:51515", html)
+        self.assertIn("192.168.1.20:443", html)
+        self.assertIn("nginx 1.18.0", html)
+
     def test_report_shows_source_snapshot_freshness(self):
         run = AuditRun.create("TEST-PC", True)
         obj = InventoryObject("s", "Installed Software", "software", "Tool", {"Version": "1"}, "fixture")

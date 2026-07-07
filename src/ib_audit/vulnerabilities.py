@@ -655,7 +655,7 @@ class VulnerabilityDatabaseSourceClient:
 
     @staticmethod
     def _generic_remediation(obj: InventoryObject) -> str:
-        if obj.object_type in {"service", "open_port"}:
+        if obj.object_type in {"service", "open_port", "network_service"}:
             return "Update the owning product, restrict exposure with firewall rules, or disable the service if it is not required."
         if obj.category_id == "s":
             return "Update the affected software to a fixed version or remove it if it is not required."
@@ -689,6 +689,7 @@ class VulnerabilityCorrelator:
         "software", "operating_system", "service", "driver",
         "odbc_driver", "oledb_provider", "bios", "device",
         "base_board", "display_adapter", "network_adapter", "physical_disk", "processor",
+        "network_service",
     }
     def __init__(self, fstec_client=None, source_client=None):
         self.fstec_client = fstec_client
@@ -1053,6 +1054,7 @@ class VulnerabilityCorrelator:
             "odbc_driver",
             "oledb_provider",
             "operating_system",
+            "network_service",
         }
 
     @staticmethod
@@ -1318,7 +1320,7 @@ class VulnerabilityCorrelator:
 
     @staticmethod
     def _generic_remediation(obj: InventoryObject) -> str:
-        if obj.object_type in {"service", "open_port"}:
+        if obj.object_type in {"service", "open_port", "network_service"}:
             return "Update the owning product, restrict exposure with firewall rules, or disable the service if it is not required."
         if obj.category_id == "s":
             return "Update the affected software to a fixed version or remove it if it is not required."

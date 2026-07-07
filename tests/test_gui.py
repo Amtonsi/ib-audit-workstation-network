@@ -256,6 +256,8 @@ class AuditWindowReportImportTests(unittest.TestCase):
         with patch("ib_audit.gui_tk.ttk.Frame", widget_factory("Frame")), \
                 patch("ib_audit.gui_tk.ttk.Label", widget_factory("Label")), \
                 patch("ib_audit.gui_tk.ttk.Button", widget_factory("Button")), \
+                patch("ib_audit.gui_tk.ttk.Checkbutton", widget_factory("Checkbutton")), \
+                patch("ib_audit.gui_tk.ttk.Entry", widget_factory("Entry")), \
                 patch("ib_audit.gui_tk.ttk.Radiobutton", widget_factory("Radiobutton")), \
                 patch("ib_audit.gui_tk.ttk.Separator", widget_factory("Separator")), \
                 patch("ib_audit.gui_tk.ttk.Progressbar", widget_factory("Progressbar")), \
@@ -285,6 +287,8 @@ class AuditWindowReportImportTests(unittest.TestCase):
         with patch("ib_audit.gui_tk.ttk.Frame", widget_factory("Frame")), \
                 patch("ib_audit.gui_tk.ttk.Label", widget_factory("Label")), \
                 patch("ib_audit.gui_tk.ttk.Button", widget_factory("Button")), \
+                patch("ib_audit.gui_tk.ttk.Checkbutton", widget_factory("Checkbutton")), \
+                patch("ib_audit.gui_tk.ttk.Entry", widget_factory("Entry")), \
                 patch("ib_audit.gui_tk.ttk.Radiobutton", widget_factory("Radiobutton")), \
                 patch("ib_audit.gui_tk.ttk.Separator", widget_factory("Separator")), \
                 patch("ib_audit.gui_tk.ttk.Progressbar", widget_factory("Progressbar")), \

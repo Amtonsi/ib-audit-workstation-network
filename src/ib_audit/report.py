@@ -63,8 +63,15 @@ class HtmlReportBuilder:
         results_by_uid: dict[str, list[RuleResult]] = defaultdict(list)
         for result in bundle.rule_results:
             results_by_uid[result.object_uid].append(result)
+        network_objects = [
+            obj for obj in inventory
+            if obj.object_type in {"network_service", "network_capture"}
+        ]
 
         nav = ["Сводка рисков", "Уязвимости", "План устранения", "Покрытие", *ordered, "Диагностика сбора"]
+        if network_objects:
+            nav.insert(4, "Network Intelligence")
+
         body = [
             "<!doctype html><html lang='ru'><head><meta charset='utf-8'>",
             f"<title>ИБ-аудит {html.escape(run.hostname)}</title>",
@@ -76,6 +83,7 @@ class HtmlReportBuilder:
             self._findings(bundle, inventory_by_uid),
             self._remediation(bundle),
             self._coverage(bundle),
+            self._network_intelligence_section(network_objects, bundle),
             self._object_filters(ordered, categories),
         ]
         for category in ordered:
@@ -157,7 +165,8 @@ class HtmlReportBuilder:
             )
             items.append(
                 f"<div class='card finding' data-kind='{html.escape(result.kind, quote=True)}' "
-                f"data-severity='{html.escape(result.severity.lower(), quote=True)}'>"
+                f"data-severity='{html.escape(result.severity.lower(), quote=True)}' "
+                f"id='{html.escape(self._finding_anchor(result.object_uid, result.rule_id), quote=True)}'>"
                 f"<h3>{html.escape(result.rule_id)} — {html.escape(result.title)}</h3>"
                 f"<p>{html.escape(result.evidence)}</p>"
                 f"{evidence_details}"
@@ -171,7 +180,8 @@ class HtmlReportBuilder:
                 continue
             items.append(
                 f"<div class='card finding' data-kind='vulnerability' "
-                f"data-severity='{html.escape(vuln.severity.lower(), quote=True)}'><h3>{html.escape(vuln.cve)} — "
+                f"data-severity='{html.escape(vuln.severity.lower(), quote=True)}' "
+                f"id='{html.escape(self._finding_anchor(vuln.object_uid, vuln.cve), quote=True)}'><h3>{html.escape(vuln.cve)} — "
                 f"{html.escape(vuln.affected_title)}</h3><p>{html.escape(vuln.evidence)}</p>"
                 f"{self._vulnerability_evidence(vuln, inventory_by_uid.get(vuln.object_uid))}"
                 f"<p><strong>Устранение:</strong> {html.escape(vuln.remediation)}</p>"
@@ -214,6 +224,112 @@ class HtmlReportBuilder:
             "«Проверено правилами» показывает долю объектов с автоматическим pass/risk. "
             "Недостаточно данных и не применимо остаются отдельными статусами, а не потерянными объектами.</p></section>"
         )
+
+    def _network_intelligence_section(
+        self,
+        network_objects: list[InventoryObject],
+        bundle: AssessmentBundle,
+    ) -> str:
+        if not network_objects:
+            return ""
+        services = [obj for obj in network_objects if obj.object_type == "network_service"]
+        flows = [obj for obj in network_objects if obj.object_type == "network_capture"]
+        external_flows = [
+            obj for obj in flows
+            if str(obj.fields.get("Destination Scope") or "").casefold() == "external"
+            or str(obj.fields.get("Source Scope") or "").casefold() == "external"
+        ]
+        applications = sorted({
+            str(obj.fields.get("Local Application") or "").strip()
+            for obj in flows
+            if str(obj.fields.get("Local Application") or "").strip()
+        })
+        items = [
+            "<section id='s-network-intelligence' class='network-intelligence'>",
+            "<h2>Network Intelligence</h2>",
+            "<div class='kpis'>",
+            self._kpi(str(len(services)), "Open services"),
+            self._kpi(str(len(flows)), "Traffic flows"),
+            self._kpi(str(len(external_flows)), "External flows"),
+            self._kpi(str(len(applications)), "Local applications"),
+            "</div>",
+        ]
+        if flows:
+            items.append("<h3>Traffic flows</h3>")
+            items.append(
+                "<table class='network-table'><tr>"
+                "<th>Local application</th><th>Direction</th><th>Source</th><th>Destination</th>"
+                "<th>Protocol</th><th>Packets</th><th>Bytes</th><th>Risks</th></tr>"
+            )
+            for obj in flows[:200]:
+                fields = obj.fields
+                source = self._endpoint(fields, "Source", "Source Port")
+                destination = self._endpoint(fields, "Destination", "Destination Port")
+                application = str(fields.get("Local Application") or fields.get("Local PID") or "unknown")
+                items.append(
+                    "<tr>"
+                    f"<td>{html.escape(application)}</td>"
+                    f"<td><span class='pill'>{html.escape(str(fields.get('Direction') or 'unknown'))}</span></td>"
+                    f"<td>{html.escape(source)}</td>"
+                    f"<td>{html.escape(destination)}</td>"
+                    f"<td>{html.escape(str(fields.get('Protocol') or ''))}</td>"
+                    f"<td>{html.escape(str(fields.get('Packets') or ''))}</td>"
+                    f"<td>{html.escape(str(fields.get('Bytes') or ''))}</td>"
+                    f"<td>{self._risk_links(obj.uid, bundle.vulnerabilities)}</td>"
+                    "</tr>"
+                )
+            items.append("</table>")
+        if services:
+            items.append("<h3>Open services</h3>")
+            items.append(
+                "<table class='network-table'><tr>"
+                "<th>Host</th><th>Port</th><th>Service</th><th>Product/version</th><th>OS</th><th>Risks</th></tr>"
+            )
+            for obj in services[:200]:
+                fields = obj.fields
+                product = " ".join(
+                    part for part in (
+                        str(fields.get("Service Product") or ""),
+                        str(fields.get("Service Version") or ""),
+                    )
+                    if part
+                ) or str(fields.get("Service") or "")
+                port = "/".join(
+                    part for part in (str(fields.get("Port") or ""), str(fields.get("Protocol") or ""))
+                    if part
+                )
+                host = " ".join(
+                    part for part in (str(fields.get("Host IP") or ""), str(fields.get("Host Name") or ""))
+                    if part
+                )
+                items.append(
+                    "<tr>"
+                    f"<td>{html.escape(host)}</td>"
+                    f"<td>{html.escape(port)}</td>"
+                    f"<td>{html.escape(str(fields.get('Service') or ''))}</td>"
+                    f"<td>{html.escape(product)}</td>"
+                    f"<td>{html.escape(str(fields.get('Host OS') or ''))}</td>"
+                    f"<td>{self._risk_links(obj.uid, bundle.vulnerabilities)}</td>"
+                    "</tr>"
+                )
+            items.append("</table>")
+        items.append("</section>")
+        return "\n".join(items)
+
+    @staticmethod
+    def _endpoint(fields: dict[str, object], address_key: str, port_key: str) -> str:
+        address = str(fields.get(address_key) or "")
+        port = str(fields.get(port_key) or "")
+        return f"{address}:{port}" if port else address
+
+    @staticmethod
+    def _risk_links(object_uid: str, vulnerabilities: list[VulnerabilityMatch]) -> str:
+        links = [
+            f"<a class='risk-link' href='#{html.escape(HtmlReportBuilder._finding_anchor(object_uid, item.cve), quote=True)}'>{html.escape(item.cve)}</a>"
+            for item in vulnerabilities
+            if item.object_uid == object_uid
+        ]
+        return " ".join(links) if links else "<span class='muted'>none</span>"
 
     def _object_filters(self, ordered: list[str], categories: dict[str, list[InventoryObject]]) -> str:
         sources = sorted({obj.source for objects in categories.values() for obj in objects if obj.source})
@@ -402,6 +518,11 @@ class HtmlReportBuilder:
         return "s-" + "".join(ch.lower() if ch.isalnum() else "-" for ch in text).strip("-")
 
     @staticmethod
+    def _finding_anchor(object_uid: str, rule_id: str) -> str:
+        safe = "".join(ch.lower() if ch.isalnum() else "-" for ch in f"{object_uid}-{rule_id}")
+        return "finding-" + safe.strip("-")
+
+    @staticmethod
     def _kpi(value: str, label: str) -> str:
         return f"<div class='kpi'><strong>{html.escape(value)}</strong><span>{html.escape(label)}</span></div>"
 
@@ -431,6 +552,7 @@ h2{margin:0 0 12px}.meta{color:#4b5563}.kpis{display:grid;grid-template-columns:
 .vulnerability-evidence p{margin:6px 0}.vulnerability-evidence code{white-space:normal;overflow-wrap:anywhere;word-break:break-word}
 .applicability-badge{display:inline-block;border-radius:999px;padding:3px 8px;margin-bottom:4px;font-size:12px;font-weight:700;background:#eef2ff;color:#3730a3}.applicability-badge.confirmed{background:#dcfce7;color:#166534}.applicability-badge.potential{background:#ffedd5;color:#9a3412}
 .reference-link{display:inline-block;max-width:100%;min-width:0;margin:4px 6px 0 0;color:#1d4ed8;overflow-wrap:anywhere;word-break:break-word;white-space:normal}.reference-link span{background:#fee2e2;color:#991b1b;border-radius:999px;padding:2px 6px;font-size:11px;font-weight:700}
+.network-intelligence h3{margin:18px 0 8px}.network-table th{background:#f8fafc}.risk-link{display:inline-block;margin:2px 4px 2px 0;color:#1d4ed8;font-weight:600}.muted{color:#6b7280}
 .limit-note{background:#fff7ed;color:#9a3412;padding:8px}table{border-collapse:collapse;width:100%;table-layout:fixed}
 td,th{border:1px solid #e5e7eb;padding:8px;text-align:left;vertical-align:top;overflow-wrap:anywhere;word-break:break-word}.item-value td:first-child{width:260px;font-weight:600}
 .item-value td:last-child{overflow-wrap:anywhere;word-break:break-word}.filters{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.filters button,.filters select{max-width:100%;margin:0 6px 8px 0}footer{color:#6b7280;font-size:12px}

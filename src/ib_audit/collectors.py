@@ -15,6 +15,7 @@ from typing import Callable
 
 from .commands import CommandResult, run_command, run_powershell_json
 from .models import CollectorDiagnostic, InventoryObject
+from .network_scan import NetworkScanConfig, collect_network_intelligence as collect_network_intelligence_data
 
 
 @dataclass(frozen=True)
@@ -814,6 +815,52 @@ def collect_network_resources() -> tuple[list[InventoryObject], list[CollectorDi
     return objects, diagnostics
 
 
+def collect_network_intelligence(
+    config: NetworkScanConfig,
+) -> tuple[list[InventoryObject], list[CollectorDiagnostic]]:
+    services, captures, diagnostics = collect_network_intelligence_data(config)
+    if not services and not captures:
+        return [], diagnostics
+    objects: list[InventoryObject] = []
+    for service in services:
+        fields = dict(service.fields)
+        title = str(service.title or "Unknown service")
+        objects.append(
+            _object(
+                "N",
+                "Network Service Discovery",
+                "network_service",
+                title,
+                fields,
+                "nmap",
+                raw=fields,
+                confidence="medium",
+            )
+        )
+    for capture in captures:
+        fields = dict(capture.fields)
+        source = str(fields.get("Source") or "")
+        destination = str(fields.get("Destination") or "")
+        source_port = str(fields.get("Source Port") or "")
+        destination_port = str(fields.get("Destination Port") or "")
+        protocol = str(fields.get("Protocol") or "")
+        packets = str(fields.get("Packets") or "")
+        title = f"{source}:{source_port} -> {destination}:{destination_port} ({protocol}) [{packets} pkt]"
+        objects.append(
+            _object(
+                "N",
+                "Network Traffic Capture",
+                "network_capture",
+                title,
+                fields,
+                "tshark",
+                raw=fields,
+                confidence="medium",
+            )
+        )
+    return objects, diagnostics
+
+
 def _process_name_map(diagnostics: list[CollectorDiagnostic]) -> dict[str, str]:
     processes, result = run_powershell_json("Get-CimInstance Win32_Process | Select-Object ProcessId,Name", timeout=30)
     if not processes:
@@ -905,10 +952,10 @@ def collect_data_providers() -> tuple[list[InventoryObject], list[CollectorDiagn
     return objects, diagnostics
 
 
-def get_collectors() -> list[Collector]:
+def get_collectors(network_scan_config: NetworkScanConfig | None = None) -> list[Collector]:
     from .security_collectors import collect_security_inventory
 
-    return [
+    collectors = [
         Collector("system_hardware", "g", "System and Hardware", collect_system_hardware),
         Collector("software_execution", "s", "Software, Updates, and Execution", collect_software_execution),
         Collector("accounts_security", "u", "Accounts and Security", collect_accounts_security),
@@ -917,3 +964,14 @@ def get_collectors() -> list[Collector]:
         Collector("data_providers", "C", "Data Providers", collect_data_providers),
         Collector("security_posture", "x", "Structured Security Posture", collect_security_inventory),
     ]
+
+    if network_scan_config and network_scan_config.enabled:
+        collectors.append(
+            Collector(
+                "network_intelligence",
+                "N",
+                "Network Intelligence",
+                lambda: collect_network_intelligence(network_scan_config),
+            )
+        )
+    return collectors

@@ -108,6 +108,12 @@ def _deltav_version_from_text(value: str) -> str:
         if patch is not None:
             parts.append(str(int(patch)))
         return ".".join(parts)
+    dotted_extended = re.search(r"\bdeltav[^\d]{0,8}(\d{1,4}(?:\.\d{1,4}){1,2})\b", text)
+    if dotted_extended:
+        raw_parts = dotted_extended.group(1).split(".")
+        if len(raw_parts) >= 2:
+            parts = [str(int(part or 0)) for part in raw_parts[:3]]
+            return ".".join(parts[: len(parts)])
     packed = re.search(r"\bdeltav\s+(\d{4})\b", text)
     if packed:
         digits = packed.group(1)
@@ -163,8 +169,10 @@ def build_identity_variants(
     product: str,
     model: str,
     inventory: list[InventoryObject],
+    fields: dict[str, object] | None = None,
 ) -> tuple[str, ...]:
     del inventory
+    fields = fields or {}
     variants: list[str] = []
 
     def add(value: str) -> None:
@@ -189,6 +197,28 @@ def build_identity_variants(
     if object_type in {"bios", "base_board", "device", "display_adapter", "network_adapter", "physical_disk"} and model:
         add(model.replace("_", " "))
         add(f"{model.replace('_', ' ')} firmware")
+    if object_type == "network_service":
+        service_name = first_value(fields, ("Service", "Service Product", "Service CPE"))
+        protocol = first_value(fields, ("Protocol", "Protocol Family"))
+        port = first_value(fields, ("Port", "Source Port", "Destination Port"))
+        vendor_service = first_value(fields, ("Vendor", "Service Product"))
+        add(service_name)
+        add(vendor_service)
+        cpe = first_value(fields, ("Service CPE",))
+        if cpe:
+            for token in re.findall(r"[^\\s:/]+", cpe.replace(":", " ").replace("_", " ")):
+                if len(token) > 2 and token not in {"cpe", "2.3", "a", "o", "h"}:
+                    add(token)
+        if protocol and port:
+            add(f"{protocol} {port}")
+            add(f"{port}/{protocol}".replace("/ ", "/").replace(" /", "/"))
+        add(first_value(fields, ("Protocol", "")))
+        if vendor and model:
+            add(f"{vendor} {model.replace('_', ' ')}")
+    if object_type == "network_capture":
+        add(first_value(fields, ("Protocol", "Service Protocol")))
+        add(first_value(fields, ("Source", "Destination", "Host IP")))
+        add(first_value(fields, ("Source Port", "Destination Port")))
     return tuple(variants)
 
 
@@ -244,6 +274,16 @@ class InventoryIdentityResolver:
             "product": ("Model", "Name", "Description"),
             "version": ("Firmware Revision", "FirmwareVersion", "Version"),
         },
+        "network_service": {
+            "vendor": ("Service", "Service Product", "Vendor", "Service CPE"),
+            "product": ("Service Product", "Service", "Service CPE", "Protocol", "Port"),
+            "version": ("Service Version", "Version", "Build", "FileVersion"),
+        },
+        "network_capture": {
+            "vendor": ("Protocol",),
+            "product": ("Protocol", "Source", "Destination"),
+            "version": ("Packets", "Bytes"),
+        },
     }
 
     def resolve(
@@ -262,7 +302,14 @@ class InventoryIdentityResolver:
                 for key in ("Device ID", "PNPDeviceID", "Hardware ID", "Hardware IDs")
             )
         )
-        variants = build_identity_variants(obj.object_type, vendor, product, model, inventory)
+        variants = build_identity_variants(
+            obj.object_type,
+            vendor,
+            product,
+            model,
+            inventory,
+            obj.fields,
+        )
         return InventoryIdentity(
             obj.uid,
             obj.object_type,

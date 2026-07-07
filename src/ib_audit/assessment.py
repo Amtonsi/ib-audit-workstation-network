@@ -34,6 +34,7 @@ VERSION_REQUIRED_FOR_VULN_COVERAGE = {
     "network_adapter",
     "physical_disk",
     "processor",
+    "network_service",
 }
 
 

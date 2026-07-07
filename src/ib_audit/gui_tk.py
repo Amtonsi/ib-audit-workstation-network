@@ -7,7 +7,7 @@ import threading
 import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import BOTH, END, LEFT, RIGHT, X, Y, StringVar, Tk, filedialog, messagebox, scrolledtext, ttk
+from tkinter import BOTH, END, LEFT, RIGHT, X, Y, BooleanVar, StringVar, Tk, filedialog, messagebox, scrolledtext, ttk
 
 from .app import (
     VULNERABILITY_MODE_FAST,
@@ -20,6 +20,7 @@ from .app import (
 from .batch import BatchProgress
 from .cancellation import AuditCancelled, CancellationToken
 from .models import SourceSnapshot
+from .network_scan import NetworkScanConfig
 
 
 SOURCE_LABELS = ("CISA KEV", "NVD", "ФСТЭК БДУ")
@@ -75,6 +76,17 @@ class ResponsiveLayout:
     status_wraplength: int
     note_wraplength: int
     header_wraplength: int
+
+
+class _FallbackVar:
+    def __init__(self, value: object = "") -> None:
+        self.value = value
+
+    def get(self) -> object:
+        return self.value
+
+    def set(self, value: object) -> None:
+        self.value = value
 
 
 def _safe_screen_value(value: int, fallback: int) -> int:
@@ -337,6 +349,13 @@ class AuditWindow:
         self.source_status = StringVar(value="кэш источников: проверяется при аудите")
         self.progress_status = StringVar(value="Прогресс: ожидание")
         self.vulnerability_mode = StringVar(value=VULNERABILITY_MODE_FULL)
+        self.network_scan_enabled = BooleanVar(value=False)
+        self.network_capture_enabled = BooleanVar(value=False)
+        self.network_targets = StringVar(value="")
+        self.network_ports = StringVar(value="1-65535")
+        self.network_extra_args = StringVar(value="")
+        self.network_capture_interface = StringVar(value="")
+        self.network_capture_duration = StringVar(value="20")
         self.last_report: str | None = None
         self.messages: queue.Queue[object] = queue.Queue()
         self.action_buttons: list[ttk.Button] = []
@@ -455,6 +474,12 @@ class AuditWindow:
             foreground=COLORS["text"],
             font=("Segoe UI", 9),
         )
+        self.style.configure(
+            "Mode.TCheckbutton",
+            background=COLORS["panel"],
+            foreground=COLORS["text"],
+            font=("Segoe UI", 9),
+        )
         badge_styles = {
             "Ready.TLabel": (COLORS["header"], "#D7E0E3"),
             "Busy.TLabel": (COLORS["blue"], "#FFFFFF"),
@@ -485,6 +510,7 @@ class AuditWindow:
             )
 
     def _build(self) -> None:
+        self._ensure_network_state()
         shell = ttk.Frame(self.root, style="App.TFrame")
         shell.pack(fill=BOTH, expand=True)
         self.shell = shell
@@ -610,6 +636,38 @@ class AuditWindow:
             style="Mode.TRadiobutton",
         ).pack(side=LEFT, padx=6)
 
+        network_panel = ttk.Frame(workspace, style="Panel.TFrame", padding=(16, 13))
+        network_panel.pack(fill=X, pady=(0, 12))
+        network_header = ttk.Frame(network_panel, style="Panel.TFrame")
+        network_header.pack(fill=X, pady=(0, 8))
+        ttk.Label(network_header, text="Network scan", style="Section.TLabel").pack(side=LEFT)
+        ttk.Checkbutton(
+            network_header,
+            text="Nmap full scan",
+            variable=self.network_scan_enabled,
+            style="Mode.TCheckbutton",
+        ).pack(side=LEFT, padx=(18, 8))
+        ttk.Checkbutton(
+            network_header,
+            text="Traffic capture (tshark/Wireshark)",
+            variable=self.network_capture_enabled,
+            style="Mode.TCheckbutton",
+        ).pack(side=LEFT, padx=(8, 0))
+        network_targets_row = ttk.Frame(network_panel, style="Panel.TFrame")
+        network_targets_row.pack(fill=X, pady=(0, 8))
+        ttk.Label(network_targets_row, text="Targets", style="Muted.TLabel").pack(side=LEFT)
+        ttk.Entry(network_targets_row, textvariable=self.network_targets).pack(side=LEFT, fill=X, expand=True, padx=(12, 0))
+        network_options_row = ttk.Frame(network_panel, style="Panel.TFrame")
+        network_options_row.pack(fill=X)
+        ttk.Label(network_options_row, text="Ports", style="Muted.TLabel").pack(side=LEFT)
+        ttk.Entry(network_options_row, textvariable=self.network_ports, width=18).pack(side=LEFT, padx=(12, 14))
+        ttk.Label(network_options_row, text="Nmap args", style="Muted.TLabel").pack(side=LEFT)
+        ttk.Entry(network_options_row, textvariable=self.network_extra_args).pack(side=LEFT, fill=X, expand=True, padx=(12, 14))
+        ttk.Label(network_options_row, text="Interface", style="Muted.TLabel").pack(side=LEFT)
+        ttk.Entry(network_options_row, textvariable=self.network_capture_interface, width=12).pack(side=LEFT, padx=(12, 14))
+        ttk.Label(network_options_row, text="Sec", style="Muted.TLabel").pack(side=LEFT)
+        ttk.Entry(network_options_row, textvariable=self.network_capture_duration, width=6).pack(side=LEFT, padx=(8, 0))
+
         output_panel = ttk.Frame(workspace, style="Panel.TFrame", padding=(16, 13))
         output_panel.pack(fill=X, pady=(0, 12))
         output_header = ttk.Frame(output_panel, style="Panel.TFrame")
@@ -676,6 +734,24 @@ class AuditWindow:
         if hasattr(self.root, "bind"):
             self.root.bind("<Configure>", self._on_root_configure)
         self._log("Рабочая станция готова. Для полного сбора запустите приложение от администратора.")
+
+    def _ensure_network_state(self) -> None:
+        def ensure(name: str, value: object, boolean: bool = False) -> None:
+            if hasattr(self, name):
+                return
+            try:
+                variable = BooleanVar(value=bool(value)) if boolean else StringVar(value=str(value))
+            except Exception:
+                variable = _FallbackVar(value)
+            setattr(self, name, variable)
+
+        ensure("network_scan_enabled", False, boolean=True)
+        ensure("network_capture_enabled", False, boolean=True)
+        ensure("network_targets", "")
+        ensure("network_ports", "1-65535")
+        ensure("network_extra_args", "")
+        ensure("network_capture_interface", "")
+        ensure("network_capture_duration", "20")
 
     def _on_root_configure(self, event: object) -> None:
         root = getattr(self, "root", None)
@@ -757,9 +833,15 @@ class AuditWindow:
         self._log("=== Новый аудит ===")
         mode = self._selected_vulnerability_mode()
         self._log(f"Режим уязвимостей: {VULNERABILITY_MODE_TEXT[mode]}")
+        network_scan = self._selected_network_scan_config()
+        thread_args = (
+            (online_sources, mode, token, network_scan)
+            if network_scan is not None
+            else (online_sources, mode, token)
+        )
         thread = threading.Thread(
             target=self._run_background,
-            args=(online_sources, mode, token),
+            args=thread_args,
             daemon=True,
         )
         thread.start()
@@ -770,11 +852,37 @@ class AuditWindow:
             return mode
         return VULNERABILITY_MODE_FULL
 
+    def _selected_network_scan_config(self) -> NetworkScanConfig | None:
+        if not hasattr(self, "network_scan_enabled") or not hasattr(self, "network_capture_enabled"):
+            return None
+        enabled = bool(self.network_scan_enabled.get() or self.network_capture_enabled.get())
+        if not enabled:
+            return None
+        targets = tuple(
+            item.strip()
+            for item in self.network_targets.get().replace(";", ",").split(",")
+            if item.strip()
+        )
+        try:
+            capture_duration = int(self.network_capture_duration.get() or "20")
+        except ValueError:
+            capture_duration = 20
+        return NetworkScanConfig(
+            enabled=True,
+            targets=targets,
+            ports=self.network_ports.get().strip() or "1-65535",
+            extra_args=self.network_extra_args.get().strip(),
+            capture_enabled=bool(self.network_capture_enabled.get()),
+            capture_interface=self.network_capture_interface.get().strip() or None,
+            capture_duration=max(1, capture_duration),
+        )
+
     def _run_background(
         self,
         online_sources: bool,
         vulnerability_mode: str = VULNERABILITY_MODE_FULL,
         cancel_token: CancellationToken | None = None,
+        network_scan: NetworkScanConfig | None = None,
     ) -> None:
         try:
             result = run_audit(
@@ -782,6 +890,7 @@ class AuditWindow:
                 output_dir=self.output_dir.get(),
                 online_sources=online_sources,
                 vulnerability_mode=vulnerability_mode,
+                network_scan=network_scan,
                 open_report=False,
                 progress=self.messages.put,
                 cancel_token=cancel_token,
