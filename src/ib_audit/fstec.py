@@ -18,6 +18,7 @@ from .cancellation import AuditCancelled, CancellationToken
 from .commands import hidden_subprocess_kwargs
 from .models import CollectorDiagnostic, InventoryObject, VulnerabilityMatch
 from .source_cache import SnapshotCache
+from .version_expression import matches_version_expression
 
 
 Transport = Callable[[str], str]
@@ -452,43 +453,7 @@ class FstecBduClient:
 
     @classmethod
     def _version_matches(cls, installed: str, expression: str) -> bool | None:
-        if not installed:
-            return None
-        installed_value = cls._version_tuple(installed)
-        if installed_value is None:
-            return None
-        normalized = " ".join(expression.casefold().replace(",", ".").split())
-        if normalized in {"", "-", ".", "не указана", "данные уточняются"}:
-            return None
-
-        range_match = re.search(r"от\s+([0-9][\w.-]*)\s+до\s+([0-9][\w.-]*)", normalized)
-        if range_match:
-            lower = cls._version_tuple(range_match.group(1))
-            upper = cls._version_tuple(range_match.group(2))
-            if lower is None or upper is None:
-                return None
-            inclusive = "включительно" in normalized
-            return installed_value >= lower and (installed_value <= upper if inclusive else installed_value < upper)
-
-        before_match = re.search(r"до\s+([0-9][\w.-]*)", normalized)
-        if before_match:
-            upper = cls._version_tuple(before_match.group(1))
-            if upper is None:
-                return None
-            return installed_value <= upper if "включительно" in normalized else installed_value < upper
-
-        below_match = re.search(r"([0-9][\w.-]*)\s+и\s+ниже", normalized)
-        if below_match:
-            upper = cls._version_tuple(below_match.group(1))
-            return None if upper is None else installed_value <= upper
-
-        above_match = re.search(r"([0-9][\w.-]*)\s+и\s+выше", normalized)
-        if above_match:
-            lower = cls._version_tuple(above_match.group(1))
-            return None if lower is None else installed_value >= lower
-
-        exact = cls._version_tuple(normalized)
-        return None if exact is None else installed_value == exact
+        return matches_version_expression(installed, expression)
 
     @staticmethod
     def _version_tuple(value: str) -> tuple[int, ...] | None:

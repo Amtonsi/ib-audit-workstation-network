@@ -143,6 +143,16 @@ class VulnerabilityCorrelatorTests(unittest.TestCase):
 
         self.assertEqual([], VulnerabilityCorrelator().match_inventory([software], [], [record]))
 
+    def test_matches_description_requires_relevant_version_and_tokens(self):
+        correlator = VulnerabilityCorrelator()
+        software = InventoryObject(
+            "s", "Installed Software", "software", "Widget Tool", {"Vendor": "WidgetCo", "Version": "2.5"}, "fixture"
+        )
+
+        self.assertTrue(correlator._matches_description(software, "Widget Tool 2.5 has a remote code vulnerability."))
+        self.assertFalse(correlator._matches_description(software, "Widget Tool is secure in this environment."))
+        self.assertFalse(correlator._matches_description(software, "Tool vulnerable in versions 2.3-2.4 on Windows."))
+
     def test_generic_legacy_windows_cpe_does_not_match_modern_windows(self):
         os_item = InventoryObject(
             "os", "Operating System", "operating_system", "Microsoft Windows 11 Pro",

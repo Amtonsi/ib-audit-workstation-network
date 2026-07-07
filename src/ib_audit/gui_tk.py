@@ -786,7 +786,7 @@ class AuditWindow:
                 progress=self.messages.put,
                 cancel_token=cancel_token,
             )
-            self.last_report = str(result["report_path"])
+            self.last_report = str(result.get("batch_report_path") or result["report_path"])
             self.messages.put(format_result_message(result))
             self.messages.put(f"Отчёт: {self.last_report}")
             self.messages.put("__STATUS__:success:Аудит завершён")

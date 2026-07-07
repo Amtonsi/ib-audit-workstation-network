@@ -25,6 +25,7 @@ from .models import (
 from .normalization import product_identity
 from .source_cache import SnapshotCache
 from .vulnerability_database import is_vulnerability_database
+from .version_expression import matches_version_expression
 
 
 class VulnerabilitySourceClient:
@@ -589,38 +590,7 @@ class VulnerabilityDatabaseSourceClient:
     def _fstec_version_matches(cls, installed: str, expression: str) -> bool | None:
         installed = str(installed or "").strip()
         expression = str(expression or "").strip()
-        if not installed:
-            return None
-        installed_value = cls._version_tuple(installed)
-        if installed_value is None:
-            return None
-        normalized = " ".join(expression.casefold().replace(",", ".").split())
-        if normalized in {"", "-", "данные уточняются"}:
-            return None
-        range_match = re.search(r"от\s+([0-9][\w.-]*)\s+до\s+([0-9][\w.-]*)", normalized)
-        if range_match:
-            lower = cls._version_tuple(range_match.group(1))
-            upper = cls._version_tuple(range_match.group(2))
-            if lower is None or upper is None:
-                return None
-            inclusive = "включительно" in normalized
-            return installed_value >= lower and (installed_value <= upper if inclusive else installed_value < upper)
-        before_match = re.search(r"до\s+([0-9][\w.-]*)", normalized)
-        if before_match:
-            upper = cls._version_tuple(before_match.group(1))
-            if upper is None:
-                return None
-            return installed_value <= upper if "включительно" in normalized else installed_value < upper
-        below_match = re.search(r"([0-9][\w.-]*)\s+и\s+ниже", normalized)
-        if below_match:
-            upper = cls._version_tuple(below_match.group(1))
-            return None if upper is None else installed_value <= upper
-        above_match = re.search(r"([0-9][\w.-]*)\s+и\s+выше", normalized)
-        if above_match:
-            lower = cls._version_tuple(above_match.group(1))
-            return None if lower is None else installed_value >= lower
-        exact = cls._version_tuple(normalized)
-        return None if exact is None else installed_value == exact
+        return matches_version_expression(installed, expression)
 
     @classmethod
     def _fstec_row_to_match(
@@ -1188,12 +1158,29 @@ class VulnerabilityCorrelator:
         version = self._version(obj)
         if not version:
             return False
-        title_words = [word for word in re.split(r"\W+", obj.title.lower()) if len(word) >= 4]
-        if title_words and all(word in description_l for word in title_words[:2]):
-            return True
+        title_tokens = [word for word in re.split(r"\W+", obj.title.lower()) if len(word) >= 4]
+        if title_tokens and not any(token in description_l for token in title_tokens[:2]):
+            return False
+        if not title_tokens and obj.title.lower() not in description_l:
+            return False
         vendor = str(obj.fields.get("Vendor") or obj.fields.get("Publisher") or "").lower()
-        product = obj.title.lower()
-        return bool(product and product in description_l and (not vendor or vendor in description_l) and (not version or version in description_l or version in text))
+        if vendor and vendor not in description_l and vendor not in text.lower():
+            return False
+        version_variants = {version, version.replace(".", " "), version.replace(".", "-"), version.replace(".", "_")}
+        if any(variant in description_l for variant in version_variants):
+            return True
+        if "all versions" in description_l or "all version" in description_l:
+            return True
+        installed_tuple = tuple(int(part) for part in re.split(r"[._-]", version) if part.isdigit())
+        if not installed_tuple:
+            return False
+        for version_item in re.findall(r"\b\d+(?:[._-]\d+){0,3}\b", description_l):
+            candidate = tuple(int(part) for part in re.split(r"[._-]", version_item) if part.isdigit())
+            if len(candidate) < 2:
+                continue
+            if candidate == installed_tuple[: len(candidate)]:
+                return True
+        return False
 
     @staticmethod
     def _version(obj: InventoryObject) -> str:

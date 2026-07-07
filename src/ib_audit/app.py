@@ -413,13 +413,30 @@ def run_audit(
     repo.save_run(run)
     report_path = HtmlReportBuilder().build(output, run, inventory, diagnostics, assessment)
     repo.save_report(ReportRecord(run.id, report_path, "html"))
+    batch_report_path = None
+    try:
+        batch_report_path = _build_single_run_batch_report(
+            output,
+            run,
+            inventory,
+            diagnostics,
+            assessment,
+        )
+        repo.save_report(ReportRecord(run.id, batch_report_path, "batch-html"))
+    except Exception as exc:
+        if progress:
+            progress(f"Batch report build failed, fallback to standard HTML report: {exc}")
+        batch_report_path = None
+
     if open_report:
-        webbrowser.open(Path(report_path).resolve().as_uri())
+        webbrowser.open(Path(batch_report_path or report_path).resolve().as_uri())
     _cleanup_audit_database(_temp_db)
     return {
         "run": run,
         "db_path": db_label,
         "report_path": report_path,
+        "single_report_path": report_path,
+        "batch_report_path": batch_report_path,
         "inventory_count": len(inventory),
         "diagnostic_count": len(diagnostics),
         "vulnerability_count": len(assessment.vulnerabilities),
@@ -509,6 +526,34 @@ def _analyze_imported_document(
         diagnostics=diagnostics,
         assessment=assessment,
     )
+
+
+def _build_single_run_batch_report(
+    output: Path,
+    run: AuditRun,
+    inventory: list[InventoryObject],
+    diagnostics: list[CollectorDiagnostic],
+    assessment: AssessmentBundle,
+) -> str:
+    synthetic_source = output / f"{run.hostname}-live-system.html"
+    document = BatchDocumentResult(
+        source_path=synthetic_source,
+        source_format="live-system",
+        run=run,
+        inventory=inventory,
+        diagnostics=diagnostics,
+        assessment=assessment,
+    )
+    from .batch_report import BatchHtmlReportBuilder
+
+    batch = BatchAssessment.create(
+        selected_paths=[synthetic_source],
+        completed=[document],
+        failures=[],
+        status="completed",
+        started_at=run.started_at,
+    )
+    return BatchHtmlReportBuilder().build(output, batch)
 
 
 def _analysis_service(
