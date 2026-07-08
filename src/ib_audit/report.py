@@ -1,6 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import html
+import json
+import re
+import ipaddress
 import urllib.parse
 from collections import defaultdict
 from pathlib import Path
@@ -68,13 +71,13 @@ class HtmlReportBuilder:
             if obj.object_type in {"network_service", "network_capture"}
         ]
 
-        nav = ["Сводка рисков", "Уязвимости", "План устранения", "Покрытие", *ordered, "Диагностика сбора"]
+        nav = ["РЎРІРѕРґРєР° СЂРёСЃРєРѕРІ", "РЈСЏР·РІРёРјРѕСЃС‚Рё", "РџР»Р°РЅ СѓСЃС‚СЂР°РЅРµРЅРёСЏ", "РџРѕРєСЂС‹С‚РёРµ", *ordered, "Р”РёР°РіРЅРѕСЃС‚РёРєР° СЃР±РѕСЂР°"]
         if network_objects:
             nav.insert(4, "Network Intelligence")
 
         body = [
             "<!doctype html><html lang='ru'><head><meta charset='utf-8'>",
-            f"<title>ИБ-аудит {html.escape(run.hostname)}</title>",
+            f"<title>РР‘-Р°СѓРґРёС‚ {html.escape(run.hostname)}</title>",
             self._styles(), "</head><body>",
             "<aside><h1>IB Audit</h1>",
             "".join(f"<a href='#{self._anchor(item)}'>{html.escape(item)}</a>" for item in nav),
@@ -83,7 +86,7 @@ class HtmlReportBuilder:
             self._findings(bundle, inventory_by_uid),
             self._remediation(bundle),
             self._coverage(bundle),
-            self._network_intelligence_section(network_objects, bundle),
+            self._network_intelligence_section(network_objects, inventory, bundle),
             self._object_filters(ordered, categories),
         ]
         for category in ordered:
@@ -91,7 +94,7 @@ class HtmlReportBuilder:
                 category, categories.get(category, []), assessment_by_uid, results_by_uid,
             ))
         body.append(self._diagnostics_section(diagnostics))
-        body.append(f"<footer>Сформировано: {html.escape(utc_now())}. Исходный документ не изменён.</footer>")
+        body.append(f"<footer>РЎС„РѕСЂРјРёСЂРѕРІР°РЅРѕ: {html.escape(utc_now())}. РСЃС…РѕРґРЅС‹Р№ РґРѕРєСѓРјРµРЅС‚ РЅРµ РёР·РјРµРЅС‘РЅ.</footer>")
         body.append(self._script())
         body.append("</main></body></html>")
         return "\n".join(body)
@@ -113,21 +116,21 @@ class HtmlReportBuilder:
         high = sum(1 for item in vulnerabilities if item.severity.upper() in {"CRITICAL", "HIGH"})
         kev = sum(1 for item in vulnerabilities if item.kev)
         snapshots = "".join(
-            f"<span class='pill'>{html.escape(item.source)} · {html.escape(item.fetched_at)} · {html.escape(item.sha256[:12])}</span>"
+            f"<span class='pill'>{html.escape(item.source)} В· {html.escape(item.fetched_at)} В· {html.escape(item.sha256[:12])}</span>"
             for item in bundle.snapshots
-        ) or "<span class='pill warning'>Базы не использованы или недоступны</span>"
+        ) or "<span class='pill warning'>Р‘Р°Р·С‹ РЅРµ РёСЃРїРѕР»СЊР·РѕРІР°РЅС‹ РёР»Рё РЅРµРґРѕСЃС‚СѓРїРЅС‹</span>"
         return (
-            "<section id='s-сводка-рисков'><h2>Сводка рисков</h2>"
-            f"<p class='meta'>Компьютер: <strong>{html.escape(run.hostname)}</strong> · "
-            f"Профиль: {html.escape(bundle.profile.profile_id)} · Администратор: {'да' if run.is_admin else 'нет'}</p>"
+            "<section id='s-СЃРІРѕРґРєР°-СЂРёСЃРєРѕРІ'><h2>РЎРІРѕРґРєР° СЂРёСЃРєРѕРІ</h2>"
+            f"<p class='meta'>РљРѕРјРїСЊСЋС‚РµСЂ: <strong>{html.escape(run.hostname)}</strong> В· "
+            f"РџСЂРѕС„РёР»СЊ: {html.escape(bundle.profile.profile_id)} В· РђРґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ: {'РґР°' if run.is_admin else 'РЅРµС‚'}</p>"
             "<div class='kpis'>"
-            f"{self._kpi(str(bundle.coverage.risk), 'объектов с риском')}"
-            f"{self._kpi(str(high), 'критичных/высоких CVE')}"
-            f"{self._kpi(str(kev), 'в CISA KEV')}"
-            f"{self._kpi(str(bundle.coverage.document_percent) + '%', 'объектов обработано')}"
-            f"{self._kpi(str(bundle.coverage.rule_checked_percent) + '%', 'проверено правилами')}"
-            f"{self._kpi(str(bundle.coverage.insufficient_data), 'недостаточно данных')}"
-            "</div><h3>Источники уязвимостей</h3>"
+            f"{self._kpi(str(bundle.coverage.risk), 'РѕР±СЉРµРєС‚РѕРІ СЃ СЂРёСЃРєРѕРј')}"
+            f"{self._kpi(str(high), 'РєСЂРёС‚РёС‡РЅС‹С…/РІС‹СЃРѕРєРёС… CVE')}"
+            f"{self._kpi(str(kev), 'РІ CISA KEV')}"
+            f"{self._kpi(str(bundle.coverage.document_percent) + '%', 'РѕР±СЉРµРєС‚РѕРІ РѕР±СЂР°Р±РѕС‚Р°РЅРѕ')}"
+            f"{self._kpi(str(bundle.coverage.rule_checked_percent) + '%', 'РїСЂРѕРІРµСЂРµРЅРѕ РїСЂР°РІРёР»Р°РјРё')}"
+            f"{self._kpi(str(bundle.coverage.insufficient_data), 'РЅРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РґР°РЅРЅС‹С…')}"
+            "</div><h3>РСЃС‚РѕС‡РЅРёРєРё СѓСЏР·РІРёРјРѕСЃС‚РµР№</h3>"
             f"{snapshots}</section>"
         )
 
@@ -138,11 +141,11 @@ class HtmlReportBuilder:
     ) -> str:
         findings = [item for item in bundle.rule_results if item.status == "risk"]
         vulnerability_index = self._vulnerability_index(bundle.vulnerabilities)
-        items = ["<section id='s-уязвимости'><h2>Уязвимости</h2>",
-                 "<div class='filters'><button onclick=\"filterFindings('all')\">Все</button>"
-                 "<button onclick=\"filterFindings('vulnerability')\">CVE/БДУ</button>"
-                 "<button onclick=\"filterFindings('configuration')\">Настройки</button>"
-                 "<button onclick=\"filterFindings('exposure')\">Автозапуск/экспозиция</button></div>"]
+        items = ["<section id='s-СѓСЏР·РІРёРјРѕСЃС‚Рё'><h2>РЈСЏР·РІРёРјРѕСЃС‚Рё</h2>",
+                 "<div class='filters'><button onclick=\"filterFindings('all')\">Р’СЃРµ</button>"
+                 "<button onclick=\"filterFindings('vulnerability')\">CVE/Р‘Р”РЈ</button>"
+                 "<button onclick=\"filterFindings('configuration')\">РќР°СЃС‚СЂРѕР№РєРё</button>"
+                 "<button onclick=\"filterFindings('exposure')\">РђРІС‚РѕР·Р°РїСѓСЃРє/СЌРєСЃРїРѕР·РёС†РёСЏ</button></div>"]
         items.append(
             "<div class='filters'>"
             "<label>Kind <select id='findingKindFilter' onchange='applyFilters()'>"
@@ -156,7 +159,7 @@ class HtmlReportBuilder:
             "</select></label></div>"
         )
         if not findings and not bundle.vulnerabilities:
-            items.append("<p>Подтверждённые риски не найдены. Проверьте покрытие и недостаточные данные.</p>")
+            items.append("<p>РџРѕРґС‚РІРµСЂР¶РґС‘РЅРЅС‹Рµ СЂРёСЃРєРё РЅРµ РЅР°Р№РґРµРЅС‹. РџСЂРѕРІРµСЂСЊС‚Рµ РїРѕРєСЂС‹С‚РёРµ Рё РЅРµРґРѕСЃС‚Р°С‚РѕС‡РЅС‹Рµ РґР°РЅРЅС‹Рµ.</p>")
         for result in findings:
             vulnerability = self._vulnerability_for_result(result, vulnerability_index)
             evidence_details = self._vulnerability_evidence(
@@ -167,11 +170,11 @@ class HtmlReportBuilder:
                 f"<div class='card finding' data-kind='{html.escape(result.kind, quote=True)}' "
                 f"data-severity='{html.escape(result.severity.lower(), quote=True)}' "
                 f"id='{html.escape(self._finding_anchor(result.object_uid, result.rule_id), quote=True)}'>"
-                f"<h3>{html.escape(result.rule_id)} — {html.escape(result.title)}</h3>"
+                f"<h3>{html.escape(result.rule_id)} вЂ” {html.escape(result.title)}</h3>"
                 f"<p>{html.escape(result.evidence)}</p>"
                 f"{evidence_details}"
-                f"<a href='#object-{html.escape(result.object_uid, quote=True)}'>Перейти к исходному объекту</a>"
-                f"<p><strong>Рекомендация:</strong> {html.escape(result.remediation)}</p>"
+                f"<a href='#object-{html.escape(result.object_uid, quote=True)}'>РџРµСЂРµР№С‚Рё Рє РёСЃС…РѕРґРЅРѕРјСѓ РѕР±СЉРµРєС‚Сѓ</a>"
+                f"<p><strong>Р РµРєРѕРјРµРЅРґР°С†РёСЏ:</strong> {html.escape(result.remediation)}</p>"
                 f"{self._reference_links(result.references)}</div>"
             )
         known_rule_ids = {item.rule_id for item in findings}
@@ -181,10 +184,10 @@ class HtmlReportBuilder:
             items.append(
                 f"<div class='card finding' data-kind='vulnerability' "
                 f"data-severity='{html.escape(vuln.severity.lower(), quote=True)}' "
-                f"id='{html.escape(self._finding_anchor(vuln.object_uid, vuln.cve), quote=True)}'><h3>{html.escape(vuln.cve)} — "
+                f"id='{html.escape(self._finding_anchor(vuln.object_uid, vuln.cve), quote=True)}'><h3>{html.escape(vuln.cve)} вЂ” "
                 f"{html.escape(vuln.affected_title)}</h3><p>{html.escape(vuln.evidence)}</p>"
                 f"{self._vulnerability_evidence(vuln, inventory_by_uid.get(vuln.object_uid))}"
-                f"<p><strong>Устранение:</strong> {html.escape(vuln.remediation)}</p>"
+                f"<p><strong>РЈСЃС‚СЂР°РЅРµРЅРёРµ:</strong> {html.escape(vuln.remediation)}</p>"
                 f"{self._reference_links(vuln.references)}</div>"
             )
         items.append("</section>")
@@ -192,14 +195,14 @@ class HtmlReportBuilder:
 
     def _remediation(self, bundle: AssessmentBundle) -> str:
         findings = [item for item in bundle.rule_results if item.status == "risk"]
-        items = ["<section id='s-план-устранения'><h2>План устранения</h2>"]
+        items = ["<section id='s-РїР»Р°РЅ-СѓСЃС‚СЂР°РЅРµРЅРёСЏ'><h2>РџР»Р°РЅ СѓСЃС‚СЂР°РЅРµРЅРёСЏ</h2>"]
         if not findings and bundle.vulnerabilities:
             for vuln in bundle.vulnerabilities:
                 items.append(f"<div class='card'><strong>{html.escape(vuln.affected_title)}</strong><p>{html.escape(vuln.remediation)}</p></div>")
         elif not findings:
-            items.append("<p>Автоматические изменения не выполняются. Подтверждённых действий нет.</p>")
+            items.append("<p>РђРІС‚РѕРјР°С‚РёС‡РµСЃРєРёРµ РёР·РјРµРЅРµРЅРёСЏ РЅРµ РІС‹РїРѕР»РЅСЏСЋС‚СЃСЏ. РџРѕРґС‚РІРµСЂР¶РґС‘РЅРЅС‹С… РґРµР№СЃС‚РІРёР№ РЅРµС‚.</p>")
         else:
-            items.append("<table><tr><th>Уровень</th><th>Правило</th><th>Объект</th><th>Рекомендация</th></tr>")
+            items.append("<table><tr><th>РЈСЂРѕРІРµРЅСЊ</th><th>РџСЂР°РІРёР»Рѕ</th><th>РћР±СЉРµРєС‚</th><th>Р РµРєРѕРјРµРЅРґР°С†РёСЏ</th></tr>")
             for result in findings:
                 items.append(
                     f"<tr><td>{html.escape(result.severity)}</td><td>{html.escape(result.rule_id)}</td>"
@@ -213,27 +216,30 @@ class HtmlReportBuilder:
     def _coverage(self, bundle: AssessmentBundle) -> str:
         c = bundle.coverage
         return (
-            "<section id='s-покрытие'><h2>Покрытие</h2><div class='kpis'>"
-            f"{self._kpi(str(c.total_objects), 'всего объектов')}"
-            f"{self._kpi(str(c.document_percent) + '%', 'объектов обработано')}"
-            f"{self._kpi(str(c.rule_checked_percent) + '%', 'проверено правилами')}"
-            f"{self._kpi(str(c.risk), 'Риск')}{self._kpi(str(c.passed), 'Проверено')}"
-            f"{self._kpi(str(c.insufficient_data), 'Недостаточно данных')}"
-            f"{self._kpi(str(c.not_applicable), 'Не применимо')}</div>"
-            "<p>«Объектов обработано» показывает, что каждый объект документа получил итоговый статус. "
-            "«Проверено правилами» показывает долю объектов с автоматическим pass/risk. "
-            "Недостаточно данных и не применимо остаются отдельными статусами, а не потерянными объектами.</p></section>"
+            "<section id='s-РїРѕРєСЂС‹С‚РёРµ'><h2>РџРѕРєСЂС‹С‚РёРµ</h2><div class='kpis'>"
+            f"{self._kpi(str(c.total_objects), 'РІСЃРµРіРѕ РѕР±СЉРµРєС‚РѕРІ')}"
+            f"{self._kpi(str(c.document_percent) + '%', 'РѕР±СЉРµРєС‚РѕРІ РѕР±СЂР°Р±РѕС‚Р°РЅРѕ')}"
+            f"{self._kpi(str(c.rule_checked_percent) + '%', 'РїСЂРѕРІРµСЂРµРЅРѕ РїСЂР°РІРёР»Р°РјРё')}"
+            f"{self._kpi(str(c.risk), 'Р РёСЃРє')}{self._kpi(str(c.passed), 'РџСЂРѕРІРµСЂРµРЅРѕ')}"
+            f"{self._kpi(str(c.insufficient_data), 'РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РґР°РЅРЅС‹С…')}"
+            f"{self._kpi(str(c.not_applicable), 'РќРµ РїСЂРёРјРµРЅРёРјРѕ')}</div>"
+            "<p>В«РћР±СЉРµРєС‚РѕРІ РѕР±СЂР°Р±РѕС‚Р°РЅРѕВ» РїРѕРєР°Р·С‹РІР°РµС‚, С‡С‚Рѕ РєР°Р¶РґС‹Р№ РѕР±СЉРµРєС‚ РґРѕРєСѓРјРµРЅС‚Р° РїРѕР»СѓС‡РёР» РёС‚РѕРіРѕРІС‹Р№ СЃС‚Р°С‚СѓСЃ. "
+            "В«РџСЂРѕРІРµСЂРµРЅРѕ РїСЂР°РІРёР»Р°РјРёВ» РїРѕРєР°Р·С‹РІР°РµС‚ РґРѕР»СЋ РѕР±СЉРµРєС‚РѕРІ СЃ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРёРј pass/risk. "
+            "РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РґР°РЅРЅС‹С… Рё РЅРµ РїСЂРёРјРµРЅРёРјРѕ РѕСЃС‚Р°СЋС‚СЃСЏ РѕС‚РґРµР»СЊРЅС‹РјРё СЃС‚Р°С‚СѓСЃР°РјРё, Р° РЅРµ РїРѕС‚РµСЂСЏРЅРЅС‹РјРё РѕР±СЉРµРєС‚Р°РјРё.</p></section>"
         )
 
     def _network_intelligence_section(
         self,
         network_objects: list[InventoryObject],
+        inventory: list[InventoryObject],
         bundle: AssessmentBundle,
     ) -> str:
         if not network_objects:
             return ""
         services = [obj for obj in network_objects if obj.object_type == "network_service"]
         flows = [obj for obj in network_objects if obj.object_type == "network_capture"]
+        adapters = [obj for obj in inventory if obj.object_type == "network_adapter"]
+        topology = self._build_network_topology(services, flows, adapters)
         external_flows = [
             obj for obj in flows
             if str(obj.fields.get("Destination Scope") or "").casefold() == "external"
@@ -244,6 +250,39 @@ class HtmlReportBuilder:
             for obj in flows
             if str(obj.fields.get("Local Application") or "").strip()
         })
+
+        dashboard = topology.get("dashboard", {})
+        protocols = dashboard.get("protocols", [])
+        talkers = dashboard.get("talkers", [])
+        top_apps = dashboard.get("applications", [])
+        topology_json = html.escape(json.dumps(topology, ensure_ascii=True), quote=False)
+
+        protocol_items = [f"<li>{html.escape(str(item.get('name', '')))}: {html.escape(str(item.get('value', 0)))} packets</li>" for item in protocols[:6]]
+        talker_items = [
+            f"<li>{html.escape(str(item.get('label', '')))}: {self._human_readable_bytes(int(item.get('bytes', 0)))}</li>"
+            for item in talkers[:6]
+        ]
+        app_items = [
+            f"<li>{html.escape(str(item.get('name', '')))}: {self._human_readable_bytes(int(item.get('bytes', 0)))}</li>"
+            for item in top_apps[:6]
+        ]
+
+        if not protocol_items:
+            protocol_items = ["<li>No data</li>"]
+        if not talker_items:
+            talker_items = ["<li>No traffic links</li>"]
+        if not app_items:
+            app_items = ["<li>No local application traffic</li>"]
+
+        summary = topology.get("summary", {})
+        role_summary = summary.get("roles", {})
+        role_items = [
+            f"<li><span class='muted'>{html.escape(str(role))}:</span> {int(count)}</li>"
+            for role, count in sorted(role_summary.items(), key=lambda item: item[0].casefold())
+        ]
+        if not role_items:
+            role_items = ["<li><span class='muted'>No role data yet</span></li>"]
+
         items = [
             "<section id='s-network-intelligence' class='network-intelligence'>",
             "<h2>Network Intelligence</h2>",
@@ -253,7 +292,41 @@ class HtmlReportBuilder:
             self._kpi(str(len(external_flows)), "External flows"),
             self._kpi(str(len(applications)), "Local applications"),
             "</div>",
+            "<div class='network-dashboard'>",
+            "<div class='network-dashboard-card'>",
+            "<h3>Traffic dashboard</h3>",
+            "<div class='dashboard-mini'>",
+            "<div class='compact-list'><strong>Top protocols</strong><ul>" + "".join(protocol_items) + "</ul></div>",
+            "<div class='compact-list'><strong>Top talkers</strong><ul>" + "".join(talker_items) + "</ul></div>",
+            "<div class='compact-list'><strong>Top local applications</strong><ul>" + "".join(app_items) + "</ul></div>",
+            "</div>",
+            "</div>",
+            "<div class='network-dashboard-card'>",
+            "<h3>Topology summary</h3>",
+            "<p>" +
+            f"<span class='muted'>Total packets:</span> {self._human_readable_bytes(int(summary.get('total_packets', 0)))} " +
+            f"<span class='muted'>Total bytes:</span> {self._human_readable_bytes(int(summary.get('total_bytes', 0)))} " +
+            f"<span class='muted'>Nodes:</span> {int(summary.get('node_count', 0))} " +
+            f"<span class='muted'>Links:</span> {int(summary.get('edge_count', 0))}" +
+            "</p><ul class='compact-list'>" + "".join(role_items) + "</ul>",
+            "</div>",
+            "</div>",
+            "<h3>Network topology</h3>",
+            "<div class='topology-wrapper'>",
+            "<canvas id='network-topology-canvas'></canvas>",
+            "<div id='network-topology-status' class='topology-status'>Building topology...</div>",
+            f"<script id='network-topology-data' type='application/json'>{topology_json}</script>",
+            "</div>",
+            "<div class='topology-legend'>",
+            "<span class='legend-gateway'>Gateway</span>",
+            "<span class='legend-router'>Router (estimated)</span>",
+            "<span class='legend-server'>Server/Endpoint</span>",
+            "<span class='legend-switch'>Switch (estimated)</span>",
+            "<span class='legend-endpoint'>Endpoint</span>",
+            "<span class='legend-external'>External</span>",
+            "</div>",
         ]
+
         if flows:
             items.append("<h3>Traffic flows</h3>")
             items.append(
@@ -317,6 +390,317 @@ class HtmlReportBuilder:
         return "\n".join(items)
 
     @staticmethod
+    def _split_values(raw: str) -> list[str]:
+        if not raw:
+            return []
+        return [part.strip() for part in re.split(r"[,;\n\r\t]+", str(raw)) if part.strip()]
+
+    @staticmethod
+    def _parse_ipv4(raw: str | object) -> str:
+        text = str(raw or "").strip()
+        if not text:
+            return ""
+        text = text.split("/")[0].strip()
+        match = re.search(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", text)
+        if not match:
+            return ""
+        candidate = match.group(1)
+        try:
+            ipaddress.IPv4Address(candidate)
+            return candidate
+        except ValueError:
+            return ""
+
+    @staticmethod
+    def _to_int(value: object, default: int = 0) -> int:
+        try:
+            return int(str(value).replace(" ", ""))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _ip_scope(value: str) -> str:
+        try:
+            ip_value = ipaddress.ip_address(value)
+        except ValueError:
+            return "unknown"
+        if ip_value.is_private:
+            return "private"
+        if ip_value.is_loopback:
+            return "loopback"
+        if ip_value.is_multicast:
+            return "multicast"
+        if ip_value.is_link_local:
+            return "link-local"
+        return "external"
+
+    @staticmethod
+    def _safe_name(value: str) -> str:
+        text = str(value or "").strip()
+        return text if len(text) <= 42 else f"{text[:39]}…"
+
+    def _human_readable_bytes(self, value: int) -> str:
+        units = ("B", "KB", "MB", "GB", "TB")
+        current = float(value)
+        for unit in units:
+            if current < 1024.0 or unit == "TB":
+                if unit == "B":
+                    return f"{int(current)} {unit}"
+                return f"{current:.2f} {unit}"
+            current = current / 1024.0
+        return f"{current:.2f} PB"
+
+    def _build_network_topology(
+        self,
+        services: list[InventoryObject],
+        flows: list[InventoryObject],
+        adapters: list[InventoryObject],
+    ) -> dict[str, object]:
+        gateway_ips: set[str] = set()
+        local_ips: set[str] = set()
+
+        def _infer_subnet(value: str) -> str:
+            parsed = self._parse_ipv4(value)
+            if not parsed:
+                return "unknown"
+            try:
+                parts = parsed.split(".")
+                return ".".join(parts[:3])
+            except Exception:
+                return "unknown"
+
+        def _infer_node_role(
+            address: str,
+            node: dict[str, object],
+            local_neighbors: int,
+            external_neighbors: int,
+            subnet_count: int,
+        ) -> str:
+            label = str(node.get("label", "")).casefold()
+            scope = self._ip_scope(address)
+            degree = len(set(node.get("neighbors", [])))
+            if address in gateway_ips or "gateway" in label or "default gateway" in label:
+                return "Gateway"
+            if ("router" in label or "rtr" in label) and degree >= 3:
+                return "Router (estimated)"
+            if scope == "external":
+                if degree >= 8:
+                    return "Switch (estimated)"
+                return "External"
+            if degree >= 10 or (degree >= 6 and subnet_count >= 4):
+                return "Switch (estimated)"
+            if (external_neighbors > 0 and local_neighbors > 0 and degree >= 4) or degree >= 8:
+                return "Router (estimated)"
+            if local_neighbors >= 4 and subnet_count >= 2 and degree >= 5:
+                return "Switch (estimated)"
+            if local_neighbors == 0 and external_neighbors > 0:
+                return "Endpoint"
+            if degree <= 1 and scope == "private":
+                return "Endpoint"
+            if scope == "private" and address in local_ips:
+                return "Server/Endpoint"
+            return "Endpoint"
+
+        for adapter in adapters:
+            for item in self._split_values(str(adapter.fields.get("Default Gateways", ""))):
+                parsed = self._parse_ipv4(item)
+                if parsed:
+                    gateway_ips.add(parsed)
+            for item in self._split_values(str(adapter.fields.get("IP Addresses", ""))):
+                parsed = self._parse_ipv4(item)
+                if parsed:
+                    local_ips.add(parsed)
+
+        service_count: dict[str, int] = defaultdict(int)
+        service_name: dict[str, str] = {}
+        for service in services:
+            host = self._parse_ipv4(service.fields.get("Host IP"))
+            if not host:
+                continue
+            service_count[host] += 1
+            host_name = str(service.fields.get("Host Name") or "").strip()
+            if host_name:
+                service_name[host] = self._safe_name(host_name)
+
+        nodes: dict[str, dict[str, object]] = {}
+
+        def make_node(ip: str) -> dict[str, object]:
+            node = nodes.setdefault(
+                ip,
+                {
+                    "id": ip,
+                    "ip": ip,
+                    "label": service_name.get(ip, ip),
+                    "scope": self._ip_scope(ip),
+                    "packets": 0,
+                    "bytes": 0,
+                    "service_count": 0,
+                    "neighbors": set(),
+                    "ports": set(),
+                    "apps": set(),
+                    "apps_count": 0,
+                },
+            )
+            return node
+
+        edges_map: dict[tuple[str, str, str], dict[str, object]] = {}
+        protocol_summary: defaultdict[str, dict[str, int]] = defaultdict(lambda: {"packets": 0, "bytes": 0})
+        app_summary: dict[str, int] = defaultdict(int)
+        total_packets = 0
+        total_bytes = 0
+
+        for flow in flows:
+            fields = flow.fields
+            source = self._parse_ipv4(fields.get("Source"))
+            destination = self._parse_ipv4(fields.get("Destination"))
+            if not source or not destination:
+                continue
+            packets = self._to_int(fields.get("Packets"), 0)
+            bytes_total = self._to_int(fields.get("Bytes"), 0)
+            total_packets += packets
+            total_bytes += bytes_total
+            source_port = str(fields.get("Source Port") or "")
+            destination_port = str(fields.get("Destination Port") or "")
+            protocol = str(fields.get("Protocol") or "unknown").strip().upper() or "unknown"
+            application = str(fields.get("Local Application") or "").strip()
+
+            source_node = make_node(source)
+            destination_node = make_node(destination)
+
+            source_node["packets"] = self._to_int(source_node.get("packets")) + packets
+            source_node["bytes"] = self._to_int(source_node.get("bytes")) + bytes_total
+            destination_node["packets"] = self._to_int(destination_node.get("packets")) + packets
+            destination_node["bytes"] = self._to_int(destination_node.get("bytes")) + bytes_total
+            source_node["neighbors"] = set(source_node["neighbors"]) | {destination}  # type: ignore[arg-type]
+            destination_node["neighbors"] = set(destination_node["neighbors"]) | {source}  # type: ignore[arg-type]
+            if source_port:
+                source_node["ports"] = set(source_node["ports"]) | {source_port}  # type: ignore[arg-type]
+            if destination_port:
+                destination_node["ports"] = set(destination_node["ports"]) | {destination_port}  # type: ignore[arg-type]
+            if application:
+                source_node["apps"] = set(source_node["apps"]) | {application}  # type: ignore[arg-type]
+                destination_node["apps"] = set(destination_node["apps"]) | {application}  # type: ignore[arg-type]
+                source_node["apps_count"] = self._to_int(source_node.get("apps_count")) + 1
+                destination_node["apps_count"] = self._to_int(destination_node.get("apps_count")) + 1
+                app_summary[application] += bytes_total
+            key = (source, destination, protocol)
+            edge = edges_map.setdefault(
+                key,
+                {
+                    "source": source,
+                    "target": destination,
+                    "protocol": protocol,
+                    "direction": str(fields.get("Direction") or ""),
+                    "ports": set(),
+                    "packets": 0,
+                    "bytes": 0,
+                },
+            )
+            edge["packets"] = self._to_int(edge.get("packets")) + packets
+            edge["bytes"] = self._to_int(edge.get("bytes")) + bytes_total
+            if source_port and destination_port:
+                edge["ports"] = set(edge["ports"]) | {f"{source_port}:{destination_port}"}  # type: ignore[arg-type]
+            protocol_summary[protocol]["packets"] += packets
+            protocol_summary[protocol]["bytes"] += bytes_total
+
+        for ip, count in service_count.items():
+            node = make_node(ip)
+            node["service_count"] = count
+
+        for address, node in nodes.items():
+            neighbors = set(node.get("neighbors") or set())
+            local_neighbors = 0
+            external_neighbors = 0
+            subnet_hits = set()
+            for item in neighbors:
+                scope = self._ip_scope(str(item))
+                if scope in {"private", "loopback", "link-local"}:
+                    local_neighbors += 1
+                    subnet_hits.add(_infer_subnet(str(item)))
+                elif scope == "external":
+                    external_neighbors += 1
+            degree = len(neighbors)
+            node["role"] = _infer_node_role(
+                address,
+                node,
+                local_neighbors=local_neighbors,
+                external_neighbors=external_neighbors,
+                subnet_count=len(subnet_hits),
+            )
+            if address in local_ips and node["role"] == "Endpoint":
+                node["role"] = "Server/Endpoint"
+            node["neighbor_count"] = degree
+            node["local_neighbor_count"] = local_neighbors
+            node["external_neighbor_count"] = external_neighbors
+            node["scope_subnet"] = _infer_subnet(address)
+            node["ports"] = sorted(node["ports"])  # type: ignore[index]
+            node["apps"] = sorted(node["apps"])  # type: ignore[index]
+
+        topology_nodes = []
+        for node in nodes.values():
+            safe_node = dict(node)
+            safe_node["ports"] = ", ".join([str(item) for item in safe_node["ports"]])  # type: ignore[index]
+            safe_node["apps"] = ", ".join([str(item) for item in safe_node["apps"]])  # type: ignore[index]
+            safe_node["role"] = str(safe_node.get("role") or "Endpoint")
+            safe_node["ip"] = str(safe_node.get("id"))
+            if safe_node.get("label") != safe_node.get("ip"):
+                safe_node["label"] = f"{safe_node.get('label', '')} [{safe_node.get('ip')}]"
+            topology_nodes.append(safe_node)
+
+        topology_edges = []
+        for edge in edges_map.values():
+            topology_edges.append({
+                "source": str(edge["source"]),
+                "target": str(edge["target"]),
+                "protocol": str(edge["protocol"]),
+                "direction": str(edge["direction"] or ""),
+                "packets": int(edge["packets"]),
+                "bytes": int(edge["bytes"]),
+                "ports": ", ".join(str(item) for item in sorted(edge["ports"])),  # type: ignore[index]
+            })
+
+        protocols = [{"name": key, "value": value["packets"], "bytes": value["bytes"]} for key, value in protocol_summary.items()]
+        protocols.sort(key=lambda item: (-(item["bytes"] or 0), -(item["value"] or 0)))
+        applications = [{"name": key, "bytes": value} for key, value in app_summary.items()]
+        applications.sort(key=lambda item: -(item["bytes"] or 0))
+        talkers = sorted(
+            (
+                {
+                    "label": f"{item['source']} -> {item['target']} ({item['protocol']})",
+                    "packets": item["packets"],
+                    "bytes": item["bytes"],
+                }
+                for item in topology_edges
+            ),
+            key=lambda item: (-(item["bytes"] or 0), -(item["packets"] or 0)),
+        )
+
+        role_summary = defaultdict(int)
+        for item in topology_nodes:
+            role_summary[str(item.get("role", "Endpoint"))] += 1
+
+        topology_nodes.sort(
+            key=lambda item: (-(int(item.get("neighbor_count", 0))), str(item.get("role", "")), str(item.get("ip", "")))
+        )
+        topology_edges.sort(key=lambda item: (-(item.get("bytes", 0)), -(item.get("packets", 0)), str(item.get("source"))))
+
+        return {
+            "summary": {
+                "node_count": len(topology_nodes),
+                "edge_count": len(topology_edges),
+                "total_packets": total_packets,
+                "total_bytes": total_bytes,
+                "roles": dict(sorted(role_summary.items())),
+            },
+            "nodes": topology_nodes,
+            "edges": topology_edges,
+            "dashboard": {
+                "protocols": protocols[:10],
+                "talkers": talkers[:20],
+                "applications": applications[:20],
+            },
+        }
+    @staticmethod
     def _endpoint(fields: dict[str, object], address_key: str, port_key: str) -> str:
         address = str(fields.get(address_key) or "")
         port = str(fields.get(port_key) or "")
@@ -365,11 +749,11 @@ class HtmlReportBuilder:
     ) -> str:
         items = [f"<section id='{self._anchor(category)}'><h2>{html.escape(category)}</h2>"]
         if not objects:
-            items.append("<p class='unavailable'>Данные недоступны. Причина указана в диагностике сбора.</p></section>")
+            items.append("<p class='unavailable'>Р”Р°РЅРЅС‹Рµ РЅРµРґРѕСЃС‚СѓРїРЅС‹. РџСЂРёС‡РёРЅР° СѓРєР°Р·Р°РЅР° РІ РґРёР°РіРЅРѕСЃС‚РёРєРµ СЃР±РѕСЂР°.</p></section>")
             return "\n".join(items)
         shown = objects if self.report_max_records is None else objects[:self.report_max_records]
         if len(shown) < len(objects):
-            items.append(f"<p class='limit-note'>Показаны первые {len(shown)} из {len(objects)} записей.</p>")
+            items.append(f"<p class='limit-note'>РџРѕРєР°Р·Р°РЅС‹ РїРµСЂРІС‹Рµ {len(shown)} РёР· {len(objects)} Р·Р°РїРёСЃРµР№.</p>")
         for obj in shown:
             status = assessments.get(obj.uid, ObjectAssessment(obj.uid, "not_applicable", 0, 0, 0, 0)).status
             items.append(
@@ -378,7 +762,7 @@ class HtmlReportBuilder:
                 f"data-source='{html.escape(obj.source, quote=True)}' "
                 f"data-category='{html.escape(category, quote=True)}'><h3>{html.escape(obj.title)}</h3>"
                 f"<span class='status {html.escape(status)}'>{html.escape(self._status_label(status))}</span>"
-                f"<p class='meta'>Источник: {html.escape(obj.source)} · Уверенность: {html.escape(obj.confidence)}</p>"
+                f"<p class='meta'>РСЃС‚РѕС‡РЅРёРє: {html.escape(obj.source)} В· РЈРІРµСЂРµРЅРЅРѕСЃС‚СЊ: {html.escape(obj.confidence)}</p>"
                 "<table class='item-value'><tr><th>Item</th><th>Value</th></tr>"
             )
             for key, value in list(obj.fields.items())[:200]:
@@ -386,7 +770,7 @@ class HtmlReportBuilder:
             items.append("</table>")
             for result in results.get(obj.uid, []):
                 items.append(
-                    f"<div class='rule {html.escape(result.status)}'><strong>{html.escape(result.rule_id)}</strong> — "
+                    f"<div class='rule {html.escape(result.status)}'><strong>{html.escape(result.rule_id)}</strong> вЂ” "
                     f"{html.escape(self._status_label(result.status))}: {html.escape(result.evidence)}</div>"
                 )
             items.append("</div>")
@@ -394,11 +778,11 @@ class HtmlReportBuilder:
         return "\n".join(items)
 
     def _diagnostics_section(self, diagnostics: list[CollectorDiagnostic]) -> str:
-        items = ["<section id='s-диагностика-сбора'><h2>Диагностика сбора</h2>"]
+        items = ["<section id='s-РґРёР°РіРЅРѕСЃС‚РёРєР°-СЃР±РѕСЂР°'><h2>Р”РёР°РіРЅРѕСЃС‚РёРєР° СЃР±РѕСЂР°</h2>"]
         if not diagnostics:
-            items.append("<p>Диагностических сообщений нет.</p>")
+            items.append("<p>Р”РёР°РіРЅРѕСЃС‚РёС‡РµСЃРєРёС… СЃРѕРѕР±С‰РµРЅРёР№ РЅРµС‚.</p>")
         else:
-            items.append("<table><tr><th>Модуль</th><th>Уровень</th><th>Сообщение</th><th>Источник</th></tr>")
+            items.append("<table><tr><th>РњРѕРґСѓР»СЊ</th><th>РЈСЂРѕРІРµРЅСЊ</th><th>РЎРѕРѕР±С‰РµРЅРёРµ</th><th>РСЃС‚РѕС‡РЅРёРє</th></tr>")
             for item in diagnostics:
                 items.append(f"<tr><td>{html.escape(item.module)}</td><td>{html.escape(item.severity)}</td><td>{html.escape(item.message)}</td><td>{html.escape(item.source)}</td></tr>")
             items.append("</table>")
@@ -412,7 +796,7 @@ class HtmlReportBuilder:
             parsed = urllib.parse.urlparse(ref)
             if parsed.scheme in {"http", "https"} and parsed.netloc:
                 safe = html.escape(ref, quote=True)
-                label = "Эксплойт" if HtmlReportBuilder._is_exploit_reference(ref) else "Источник"
+                label = "Р­РєСЃРїР»РѕР№С‚" if HtmlReportBuilder._is_exploit_reference(ref) else "РСЃС‚РѕС‡РЅРёРє"
                 links.append(
                     f"<a class='reference-link' href='{safe}' rel='noreferrer'>"
                     f"<span>{html.escape(label)}</span> {safe}</a>"
@@ -447,9 +831,9 @@ class HtmlReportBuilder:
     ) -> str:
         if vulnerability is None:
             return ""
-        installed_version = cls._installed_version(inventory_object) or "не определена"
+        installed_version = cls._installed_version(inventory_object) or "РЅРµ РѕРїСЂРµРґРµР»РµРЅР°"
         applicability = vulnerability.applicability.casefold() or "confirmed"
-        label = "Подтверждено" if applicability == "confirmed" else "Потенциальный риск"
+        label = "РџРѕРґС‚РІРµСЂР¶РґРµРЅРѕ" if applicability == "confirmed" else "РџРѕС‚РµРЅС†РёР°Р»СЊРЅС‹Р№ СЂРёСЃРє"
         cpe = (
             f"<p><strong>CPE:</strong> <code>{html.escape(vulnerability.cpe)}</code></p>"
             if vulnerability.cpe
@@ -459,9 +843,9 @@ class HtmlReportBuilder:
             "<div class='vulnerability-evidence'>"
             f"<span class='applicability-badge {html.escape(applicability, quote=True)}'>"
             f"{html.escape(label)}</span>"
-            f"<p><strong>Установленная версия:</strong> {html.escape(installed_version)}</p>"
+            f"<p><strong>РЈСЃС‚Р°РЅРѕРІР»РµРЅРЅР°СЏ РІРµСЂСЃРёСЏ:</strong> {html.escape(installed_version)}</p>"
             f"{cpe}"
-            f"<p><strong>Доказательство:</strong> {html.escape(vulnerability.evidence)}</p>"
+            f"<p><strong>Р”РѕРєР°Р·Р°С‚РµР»СЊСЃС‚РІРѕ:</strong> {html.escape(vulnerability.evidence)}</p>"
             f"{cls._human_vulnerability_reason(vulnerability)}</div>"
         )
 
@@ -493,9 +877,9 @@ class HtmlReportBuilder:
             vulnerability.applicability.casefold() == "potential"
             and "firmware version is unknown" in evidence
         ):
-            return "<p><strong>Причина:</strong> Версия прошивки не подтверждена</p>"
+            return "<p><strong>РџСЂРёС‡РёРЅР°:</strong> Р’РµСЂСЃРёСЏ РїСЂРѕС€РёРІРєРё РЅРµ РїРѕРґС‚РІРµСЂР¶РґРµРЅР°</p>"
         if vulnerability.applicability.casefold() == "potential":
-            return "<p><strong>Причина:</strong> Нужна ручная проверка применимости</p>"
+            return "<p><strong>РџСЂРёС‡РёРЅР°:</strong> РќСѓР¶РЅР° СЂСѓС‡РЅР°СЏ РїСЂРѕРІРµСЂРєР° РїСЂРёРјРµРЅРёРјРѕСЃС‚Рё</p>"
         return ""
 
     @staticmethod
@@ -509,8 +893,8 @@ class HtmlReportBuilder:
     @staticmethod
     def _status_label(status: str) -> str:
         return {
-            "risk": "Риск", "passed": "Проверено",
-            "insufficient_data": "Недостаточно данных", "not_applicable": "Не применимо",
+            "risk": "Р РёСЃРє", "passed": "РџСЂРѕРІРµСЂРµРЅРѕ",
+            "insufficient_data": "РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РґР°РЅРЅС‹С…", "not_applicable": "РќРµ РїСЂРёРјРµРЅРёРјРѕ",
         }.get(status, status)
 
     @staticmethod
@@ -529,7 +913,7 @@ class HtmlReportBuilder:
     @staticmethod
     def _short(value: object) -> str:
         text = str(value)
-        return text if len(text) <= 4000 else text[:4000] + "…"
+        return text if len(text) <= 4000 else text[:4000] + "вЂ¦"
 
     @staticmethod
     def _styles() -> str:
@@ -556,6 +940,24 @@ h2{margin:0 0 12px}.meta{color:#4b5563}.kpis{display:grid;grid-template-columns:
 .limit-note{background:#fff7ed;color:#9a3412;padding:8px}table{border-collapse:collapse;width:100%;table-layout:fixed}
 td,th{border:1px solid #e5e7eb;padding:8px;text-align:left;vertical-align:top;overflow-wrap:anywhere;word-break:break-word}.item-value td:first-child{width:260px;font-weight:600}
 .item-value td:last-child{overflow-wrap:anywhere;word-break:break-word}.filters{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.filters button,.filters select{max-width:100%;margin:0 6px 8px 0}footer{color:#6b7280;font-size:12px}
+.network-dashboard{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin:10px 0}
+.network-dashboard-card{border:1px solid #e5e7eb;border-radius:8px;padding:10px;background:#ffffff}
+.network-dashboard-card h3{margin-top:0}
+.dashboard-mini{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}
+.compact-list{background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:8px}
+.compact-list ul{margin:0;padding-left:18px}
+.compact-list li{margin-bottom:4px}
+.topology-wrapper{position:relative;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;background:radial-gradient(circle at 30% 20%, #eef2ff, #f8fafc)}
+#network-topology-canvas{display:block;width:100%;height:430px;min-height:400px}
+.topology-status{padding:8px 10px;color:#374151;font-size:12px;background:#fff;border-top:1px solid #e5e7eb}
+.topology-legend{display:flex;flex-wrap:wrap;gap:8px;padding-top:8px}
+.topology-legend span{padding:4px 8px;border-radius:999px;font-size:12px}
+.legend-gateway{background:#dbeafe;color:#1d4ed8}
+.legend-router{background:#fde68a;color:#92400e}
+.legend-server{background:#dcfce7;color:#166534}
+.legend-switch{background:#fef3c7;color:#b45309}
+.legend-endpoint{background:#d1fae5;color:#065f46}
+.legend-external{background:#fee2e2;color:#991b1b}
 @media(max-width:820px){aside{position:static;width:auto}main{margin:0;padding:12px}}
 </style>"""
 
@@ -589,8 +991,136 @@ function filterFindings(kind){
   if(element){element.value=kind;}
   applyFilters();
 }
-document.addEventListener('DOMContentLoaded', applyFilters);
+function projectPoint(point, angles, width, height){
+  var x=point.x, y=point.y, z=point.z || 0;
+  var cosy=Math.cos(angles.y), siny=Math.sin(angles.y);
+  var cosx=Math.cos(angles.x), sinx=Math.sin(angles.x);
+  var tx=x*cosy + z*siny;
+  var tz=-x*siny + z*cosy;
+  var ty=y*cosx - tz*sinx;
+  var pz=500/(500+tz);
+  return {
+    x: width/2 + tx*pz*4,
+    y: height/2 + ty*pz*4,
+    depth: pz
+  };
+}
+function initNetworkTopology(){
+  var dataTag=document.getElementById('network-topology-data');
+  if(!dataTag){return;}
+  var payload={};
+  try{payload=JSON.parse(dataTag.textContent || '{}');}catch(error){}
+  var canvas=document.getElementById('network-topology-canvas');
+  var status=document.getElementById('network-topology-status');
+  if(!canvas || !payload || !payload.nodes || !payload.nodes.length){
+    if(status){status.textContent='No topology data available yet. Run network scan with traffic capture enabled.';}
+    return;
+  }
+  var context=canvas.getContext('2d');
+  if(!context){return;}
+  var width=canvas.clientWidth;
+  var height=canvas.clientHeight;
+  var dpr=window.devicePixelRatio || 1;
+  function refreshCanvas(){
+    width=canvas.clientWidth;
+    height=canvas.clientHeight;
+    canvas.width=Math.max(1,width*dpr);
+    canvas.height=Math.max(1,height*dpr);
+    context.setTransform(dpr,0,0,dpr,0,0);
+  }
+  window.addEventListener('resize', refreshCanvas);
+  refreshCanvas();
+  if(status){status.textContent='Topology loaded: '+payload.nodes.length+' nodes, '+payload.edges.length+' links';}
+  var angles={x:0.35, y:0.25};
+  var nodeList=payload.nodes.map(function(node, index){
+    var angle=(index/payload.nodes.length)*Math.PI*2;
+    var ring=Math.floor(index/6)+1;
+    return {
+      id:node.id,
+      x:Math.cos(angle)*90*ring + (Math.random()*10-5),
+      y:Math.sin(angle)*55*ring + (Math.random()*10-5),
+      z:((index%3)-1)*25 + (Math.random()*10-5),
+      label:node.label || node.id,
+      role:node.role || 'Endpoint',
+      packets:node.packets || 0,
+      bytes:node.bytes || 0
+    };
+  });
+  var edgeList=(payload.edges || []);
+  function roleColor(role){
+    var value=(role || '').toLowerCase();
+    if(value.indexOf('gateway')>=0){return '#2563eb';}
+    if(value.indexOf('router')>=0){return '#ca8a04';}
+    if(value.indexOf('external')>=0){return '#dc2626';}
+    if(value.indexOf('server')>=0){return '#10b981';}
+    if(value.indexOf('endpoint')>=0){return '#22c55e';}
+    if(value.indexOf('switch')>=0){return '#b45309';}
+    return '#16a34a';
+  }
+  function drawDashboardSummary(context2d){
+    context2d.fillStyle='#111827';
+    context2d.font='10px Segoe UI, Arial, sans-serif';
+  }
+  function draw(){
+    context.clearRect(0,0,width,height);
+    context.fillStyle='#f8fafc';
+    context.fillRect(0,0,width,height);
+    angles.y += 0.002;
+    angles.x += 0.001;
+    var rendered=[];
+    for(var i=0;i<edgeList.length;i++){
+      var edge=edgeList[i];
+      var from=nodeList.find(function(node){return node.id===edge.source;});
+      var to=nodeList.find(function(node){return node.id===edge.target;});
+      if(!from || !to){continue;}
+      var p1=projectPoint(from, angles, width, height);
+      var p2=projectPoint(to, angles, width, height);
+      context.strokeStyle='rgba(71,85,105,'+(0.25+Math.min(p1.depth,p2.depth)*0.5)+')';
+      context.lineWidth=Math.max(1,p1.depth*2);
+      context.beginPath();
+      context.moveTo(p1.x,p1.y);
+      context.lineTo(p2.x,p2.y);
+      context.stroke();
+      if(p1.depth>0.5 && edge.packets){
+        context.fillStyle='rgba(17,24,39,'+(0.2+Math.min(0.6,p1.depth)+0.2)+')';
+        context.fillText((edge.protocol || '') + ': ' + edge.bytes + ' B', (p1.x+p2.x)/2+2, (p1.y+p2.y)/2-2);
+      }
+    }
+    for(var j=0;j<nodeList.length;j++){
+      var node=nodeList[j];
+      var projected=projectPoint(node, angles, width, height);
+      var base=Math.max(7, Math.min(22, Math.sqrt(Math.max(1,node.bytes||1))*0.35));
+      context.beginPath();
+      context.fillStyle='rgba(99,102,241,'+(0.2+projected.depth*0.2)+')';
+      context.arc(projected.x, projected.y, base*1.35,0,Math.PI*2);
+      context.fill();
+      context.beginPath();
+      context.fillStyle=roleColor(node.role);
+      context.arc(projected.x, projected.y, base,0,Math.PI*2);
+      context.fill();
+      context.fillStyle='#fff';
+      context.font='bold 11px Segoe UI, Arial, sans-serif';
+      context.textAlign='center';
+      context.textBaseline='middle';
+      context.fillText(node.label, projected.x, projected.y+base+12);
+      context.fillStyle='#1e293b';
+      context.font='9px Segoe UI, Arial, sans-serif';
+      context.fillText(node.role, projected.x, projected.y+base+24);
+      context.fillStyle='#111827';
+      context.font='10px Segoe UI, Arial, sans-serif';
+      context.fillText('p '+node.packets+' b '+node.bytes, projected.x, projected.y+base+36);
+    }
+    drawDashboardSummary(context);
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+}
+document.addEventListener('DOMContentLoaded', function(){
+  applyFilters();
+  initNetworkTopology();
+});
 </script>"""
 
 
 __all__ = ["HtmlReportBuilder", "ReportRecord"]
+

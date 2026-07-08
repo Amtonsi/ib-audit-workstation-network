@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import locale
 import os
+import shutil
 import subprocess
+import sys
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +22,68 @@ class CommandResult:
     @property
     def ok(self) -> bool:
         return self.returncode == 0 and not self.timed_out
+
+
+def _tool_search_roots() -> list[Path]:
+    meipass = getattr(sys, "_MEIPASS", "")
+    roots: list[Path] = []
+    seen: set[Path] = set()
+
+    if meipass:
+        roots.append(Path(meipass))
+
+    module_dir = Path(__file__).resolve()
+    for level in (1, 2, 3):
+        if len(module_dir.parents) >= level:
+            parent = module_dir.parents[level - 1]
+            if parent not in seen:
+                seen.add(parent)
+                roots.append(parent)
+
+    exe_dir = Path(sys.executable).resolve().parent
+    if exe_dir not in seen:
+        roots.append(exe_dir)
+
+    return roots
+
+
+def _tool_executables(tool: str) -> list[str]:
+    normalized = tool.strip().lower()
+    if normalized == "nmap":
+        return ["nmap.exe", "nmap"]
+    if normalized == "tshark":
+        return ["tshark.exe", "tshark"]
+    if os.name == "nt":
+        return [f"{tool}.exe", tool]
+    return [tool]
+
+
+def resolve_tool_command(tool: str) -> str:
+    candidate_names = _tool_executables(tool)
+
+    for root in _tool_search_roots():
+        for name in candidate_names:
+            candidate = (root / "tools" / normalized_tool_dir(tool) / name)
+            if candidate.exists():
+                return str(candidate)
+
+    for name in candidate_names:
+        system_path = shutil.which(name)
+        if system_path:
+            return system_path
+
+    return candidate_names[0]
+
+
+def command_exists(command: str) -> bool:
+    command_path = Path(command)
+    if command_path.is_absolute() or str(command_path).find("\\") >= 0 or str(command_path).find("/") >= 0:
+        return command_path.exists()
+    return shutil.which(str(command_path)) is not None
+
+
+def normalized_tool_dir(tool: str) -> str:
+    return {"nmap": "nmap", "tshark": "wireshark"}.get(tool.strip().lower(), tool.strip().lower())
 
 
 def _decode_output(value: bytes | str | None) -> str:

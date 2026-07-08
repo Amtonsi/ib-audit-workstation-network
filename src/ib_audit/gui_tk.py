@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import queue
 import re
 import sys
@@ -20,7 +21,7 @@ from .app import (
 from .batch import BatchProgress
 from .cancellation import AuditCancelled, CancellationToken
 from .models import SourceSnapshot
-from .network_scan import NETWORK_COMMAND_OPTIONS, NetworkScanConfig
+from .network_scan import NETWORK_COMMAND_OPTIONS, NetworkScanConfig, detect_tshark_interfaces
 
 
 SOURCE_LABELS = ("CISA KEV", "NVD", "ФСТЭК БДУ")
@@ -313,6 +314,14 @@ def progress_status_for_message(message: str) -> str | None:
     if "running collector:" in lowered:
         collector = message.split(":", 1)[1].strip() if ":" in message else ""
         return f"Прогресс: сбор инвентаря {collector}".strip()
+    if lowered.startswith("network intelligence"):
+        return f"Прогресс: {message}"
+    if lowered.startswith("nmap"):
+        return f"Прогресс: {message}"
+    if "running nmap" in lowered:
+        return f"Прогресс: {message}"
+    if "starting traffic capture" in lowered or "traffic capture completed" in lowered:
+        return f"Прогресс: {message}"
     if "assessing vulnerabilities" in lowered:
         return "Прогресс: оценка уязвимостей"
     if "audit started" in lowered or "importing local html report" in lowered:
@@ -366,6 +375,14 @@ def progress_value_for_message(message: str, current: int) -> int:
         return max(current, 80)
     if "assessing vulnerabilities" in lowered:
         return max(current, 85)
+    if lowered.startswith("network intelligence"):
+        return min(98, max(current + 8, 25))
+    if lowered.startswith("nmap"):
+        return min(85, max(current + 8, 30))
+    if "running nmap" in lowered or "starting traffic capture" in lowered:
+        return min(95, max(current + 8, 55))
+    if "traffic capture completed" in lowered:
+        return min(92, max(current + 8, 70))
     nvd_cpe_progress = _nvd_cpe_progress_value(message, current)
     if nvd_cpe_progress is not None:
         return nvd_cpe_progress
@@ -401,6 +418,7 @@ class AuditWindow:
         self.network_ports = StringVar(value="1-65535")
         self.network_extra_args = StringVar(value="")
         self.network_capture_interface = StringVar(value="")
+        self.network_capture_excluded_interfaces = StringVar(value="")
         self.network_capture_duration = StringVar(value="20")
         self.network_capture_filter = StringVar(value="")
         self.network_nmap_no_dns = BooleanVar(value=True)
@@ -412,6 +430,9 @@ class AuditWindow:
         self.network_capture_no_name_resolution = BooleanVar(value=True)
         self.network_capture_quiet = BooleanVar(value=True)
         self.last_report: str | None = None
+        self._network_live_dashboard_path: Path | None = None
+        self._network_live_events: list[str] = []
+        self._network_report_path_for_dashboard: str | None = None
         self.messages: queue.Queue[object] = queue.Queue()
         self.action_buttons: list[ttk.Button] = []
         self.active_cancel_token: CancellationToken | None = None
@@ -419,6 +440,7 @@ class AuditWindow:
         self._applying_responsive_layout = False
         self._configure_styles()
         self._build()
+        self.root.after(250, self._auto_detect_network_capture_interface)
         self.root.after(200, self._drain_messages)
 
     def _configure_styles(self) -> None:
@@ -611,6 +633,14 @@ class AuditWindow:
             cursor="hand2",
         )
         live_button.pack(fill=X, pady=(0, 8))
+        network_button = ttk.Button(
+            rail,
+            text="Сетевой аудит",
+            command=lambda: self._start(True, network_only=True),
+            style="Secondary.TButton",
+            cursor="hand2",
+        )
+        network_button.pack(fill=X, pady=(0, 8))
         import_button = ttk.Button(
             rail,
             text="Проверить HTML-отчёты",
@@ -633,7 +663,7 @@ class AuditWindow:
             state="disabled",
         )
         self.cancel_button.pack(fill=X)
-        self.action_buttons = [live_button, import_button, update_button]
+        self.action_buttons = [live_button, network_button, import_button, update_button]
 
         ttk.Separator(rail, orient="horizontal").pack(fill=X, pady=24)
         ttk.Label(rail, text="РЕЗУЛЬТАТЫ", style="RailSection.TLabel").pack(anchor="w", pady=(0, 12))
@@ -818,6 +848,7 @@ class AuditWindow:
         ensure("network_ports", "1-65535")
         ensure("network_extra_args", "")
         ensure("network_capture_interface", "")
+        ensure("network_capture_excluded_interfaces", "")
         ensure("network_capture_duration", "20")
         ensure("network_capture_filter", "")
         ensure("network_nmap_no_dns", True, boolean=True)
@@ -853,6 +884,52 @@ class AuditWindow:
             return str(variable.get()).strip()
         except Exception:
             return default
+
+    def _network_interface_tokens(self, variable_name: str) -> tuple[str, ...]:
+        raw = self._network_string_value(variable_name)
+        tokens: list[str] = []
+        for raw_token in raw.replace(";", ",").split(","):
+            token = raw_token.strip()
+            if token:
+                tokens.append(token)
+        return tuple(dict.fromkeys(tokens))
+
+    def _is_interface_disabled(self, candidate: dict[str, str], disabled: tuple[str, ...]) -> bool:
+        disabled_set = {_token.strip().lower() for _token in disabled if _token.strip()}
+        for value in (
+            candidate.get("index", ""),
+            candidate.get("name", ""),
+            candidate.get("description", ""),
+        ):
+            if str(value).strip().lower() in disabled_set:
+                return True
+        return False
+
+    def _auto_detect_network_capture_interface(self) -> None:
+        self._ensure_network_state()
+        if self.network_capture_interface.get().strip():
+            return
+        candidates, error = detect_tshark_interfaces()
+        if not candidates:
+            if error:
+                self._log(f"Автоподбор интерфейса: {error}")
+            return
+        disabled = self._network_interface_tokens("network_capture_excluded_interfaces")
+        for candidate in candidates:
+            if self._is_interface_disabled(candidate, disabled):
+                continue
+            value = candidate.get("name", "").strip() or candidate.get("index", "").strip()
+            if value:
+                self.network_capture_interface.set(value)
+                description = candidate.get("description", "").strip()
+                if description:
+                    self._log(f"Автоподбор интерфейса захвата: {value} ({description})")
+                else:
+                    self._log(f"Автоподбор интерфейса захвата: {value}")
+                return
+        self._log("Автоподбор интерфейса: все интерфейсы в списке отключены.")
+        self.network_capture_enabled.set(False)
+        self._log("Захват трафика отключён, так как все интерфейсы помечены как отключённые.")
 
     def _open_network_commands(self) -> None:
         self._ensure_network_state()
@@ -917,6 +994,7 @@ class AuditWindow:
             ("Профиль скорости", self.network_nmap_timing, "Значение nmap -T0..-T5. По умолчанию T2 — осторожный режим."),
             ("Доп. аргументы Nmap", self.network_extra_args, "Аргументы добавляются в конец nmap-команды перед целями."),
             ("Интерфейс tshark", self.network_capture_interface, "Номер интерфейса из tshark -D. Если пусто, программа попробует выбрать первый доступный."),
+            ("Отключенные интерфейсы", self.network_capture_excluded_interfaces, "Через ; или , перечислите интерфейсы из -D, которые нужно пропустить."),
             ("Длительность захвата, сек", self.network_capture_duration, "Ограничение tshark через -a duration:<секунды>."),
             ("Фильтр захвата", self.network_capture_filter, "BPF-фильтр tshark -f, например: tcp port 443 или host 192.168.1.10."),
         )
@@ -1004,18 +1082,19 @@ class AuditWindow:
         )
         thread.start()
 
-    def _start(self, online_sources: bool) -> None:
-        status = "Полный аудит компьютера"
+    def _start(self, online_sources: bool, network_only: bool = False) -> None:
+        status = "Сетевой аудит" if network_only else "Полный аудит компьютера"
         token = self._begin_operation(status)
-        self._log("=== Новый аудит ===")
+        self._log("=== Сетевой аудит ===" if network_only else "=== Новый аудит ===")
         mode = self._selected_vulnerability_mode()
         self._log(f"Режим уязвимостей: {VULNERABILITY_MODE_TEXT[mode]}")
         network_scan = self._selected_network_scan_config()
-        thread_args = (
-            (online_sources, mode, token, network_scan)
-            if network_scan is not None
-            else (online_sources, mode, token)
-        )
+        if network_scan is not None:
+            self._start_network_scan_live_dashboard(network_scan, network_only)
+        if network_scan is not None or network_only:
+            thread_args = (online_sources, mode, token, network_scan, network_only)
+        else:
+            thread_args = (online_sources, mode, token)
         thread = threading.Thread(
             target=self._run_background,
             args=thread_args,
@@ -1056,11 +1135,108 @@ class AuditWindow:
             nmap_service_detection=self._network_bool_value("network_nmap_service_detection", True),
             capture_enabled=self._network_bool_value("network_capture_enabled"),
             capture_interface=self._network_string_value("network_capture_interface") or None,
+            capture_disabled_interfaces=self._network_interface_tokens("network_capture_excluded_interfaces"),
             capture_duration=max(1, capture_duration),
             capture_filter=self._network_string_value("network_capture_filter"),
             capture_no_name_resolution=self._network_bool_value("network_capture_no_name_resolution", True),
             capture_quiet=self._network_bool_value("network_capture_quiet", True),
         )
+
+    def _start_network_scan_live_dashboard(self, network_scan: NetworkScanConfig, network_only: bool) -> None:
+        path = Path(self.output_dir.get()) / "network-scan-live-dashboard.html"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._network_live_dashboard_path = path
+        self._network_report_path_for_dashboard = None
+        targets = ", ".join(network_scan.targets) or "auto-detect (from local interfaces)"
+        capture_mode = "enabled" if network_scan.capture_enabled else "disabled"
+        config_lines = [
+            f"Network scan mode: {'network only' if network_only else 'full audit'}",
+            f"Targets: {targets}",
+            f"Nmap ports: {network_scan.ports or '1-65535'}",
+            f"Capture: {capture_mode}",
+        ]
+        if network_scan.capture_enabled:
+            config_lines.append(f"Capture interface: {network_scan.capture_interface or 'auto'}")
+            if network_scan.capture_disabled_interfaces:
+                config_lines.append("Disabled interfaces: " + ", ".join(network_scan.capture_disabled_interfaces))
+            config_lines.append(f"Capture duration: {network_scan.capture_duration}s")
+        self._network_live_events = [f"Scan started: {line}" for line in config_lines]
+        self._render_network_scan_live_dashboard("Waiting for network scan messages...")
+        webbrowser.open(path.resolve().as_uri())
+
+    def _render_network_scan_live_dashboard(self, status: str) -> None:
+        if not self._network_live_dashboard_path:
+            return
+        status_text = html.escape(status or "")
+        report_link = ""
+        if self._network_report_path_for_dashboard and Path(self._network_report_path_for_dashboard).exists():
+            report_uri = Path(self._network_report_path_for_dashboard).resolve().as_uri()
+            report_link = (
+                "<a href='{uri}' target='_blank' style='"
+                "padding:4px 9px; background:#dcfce7; color:#166534;"
+                "text-decoration:none; border-radius:999px; font-size:12px;"
+                "'>"
+                "Открыть итоговый сетевой отчёт</a>"
+            ).format(uri=html.escape(report_uri, quote=True))
+        event_rows = "".join(
+            f"<li>{html.escape(event)}</li>" for event in self._network_live_events[-90:]
+        )
+        html_payload = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="2">
+<title>Network scan dashboard</title>
+<style>
+body{{margin:0;background:#f4f6fa;font-family:Segoe UI,Arial,sans-serif;color:#0f172a;padding:20px}}
+.panel{{max-width:980px;margin:0 auto;background:#fff;border:1px solid #d8dee9;border-radius:10px;padding:14px}}
+.row{{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0}}
+.chip{{background:#eef2ff;color:#1e40af;border-radius:999px;padding:4px 8px;font-size:12px}}
+.events{{background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:10px;max-height:340px;overflow:auto;list-style:none;margin:0}}
+.events li{{margin:0 0 6px 0;padding:4px;border-bottom:1px dotted #e2e8f0}}
+.status{{font-size:12px;color:#334155;margin:6px 0}}
+.muted{{color:#64748b;font-size:12px}}
+</style>
+</head>
+<body>
+ <div class="panel">
+   <h2 style="margin:0 0 6px 0">Network capture/dashboard</h2>
+   <p class="status">{status_text}</p>
+   <div class="row">
+     <div class="chip">Live scan status</div>
+     <div class="chip">Topology map built in report</div>
+    </div>
+   <div class="row">{report_link}</div>
+   <h3 style="margin:8px 0 6px 0">Scan feed</h3>
+   <ul class="events">{event_rows}</ul>
+   <p class="muted">Auto-refresh: every 2 seconds. Last {len(self._network_live_events)} events shown.</p>
+</div>
+</body>
+</html>"""
+        self._network_live_dashboard_path.write_text(html_payload, encoding="utf-8")
+
+    def _append_network_scan_event(self, message: str) -> None:
+        if not self._network_live_dashboard_path:
+            return
+        event = str(message or "").strip()
+        if not event:
+            return
+        self._network_live_events.append(event)
+        if len(self._network_live_events) > 90:
+            self._network_live_events = self._network_live_events[-90:]
+        self._render_network_scan_live_dashboard(event)
+
+    def _finish_network_scan_dashboard(self, final_status: str) -> None:
+        if not self._network_live_dashboard_path:
+            return
+        if self._network_report_path_for_dashboard:
+            self._append_network_scan_event(
+                f"Report generated: {Path(self._network_report_path_for_dashboard).name}"
+            )
+        if final_status:
+            self._append_network_scan_event(final_status)
+        self._render_network_scan_live_dashboard(final_status or "Scan finished")
+        self._network_live_dashboard_path = None
 
     def _run_background(
         self,
@@ -1068,6 +1244,7 @@ class AuditWindow:
         vulnerability_mode: str = VULNERABILITY_MODE_FULL,
         cancel_token: CancellationToken | None = None,
         network_scan: NetworkScanConfig | None = None,
+        network_only: bool = False,
     ) -> None:
         try:
             result = run_audit(
@@ -1076,12 +1253,15 @@ class AuditWindow:
                 online_sources=online_sources,
                 vulnerability_mode=vulnerability_mode,
                 network_scan=network_scan,
+                network_only=network_only,
                 open_report=False,
                 progress=self.messages.put,
                 cancel_token=cancel_token,
             )
             self.last_report = str(result["report_path"])
             self.messages.put(format_result_message(result))
+            if self._network_live_dashboard_path:
+                self.messages.put(f"__REPORT_PATH__:{self.last_report}")
             self.messages.put(f"Отчёт: {self.last_report}")
             self.messages.put("__STATUS__:success:Аудит завершён")
         except AuditCancelled:
@@ -1232,18 +1412,39 @@ class AuditWindow:
                 )
                 payload = message.split(":", 1)[1]
                 explicit_tone, separator, status_text = payload.partition(":")
+                if self._network_live_dashboard_path and explicit_tone in {"success", "error", "cancelled"}:
+                    self._finish_network_scan_dashboard(f"Scan result: {payload}")
+                elif self._network_live_dashboard_path:
+                    self._append_network_scan_event(f"STATUS: {payload}")
                 if separator and explicit_tone in {"success", "error", "cancelled"}:
                     tone = explicit_tone
                 else:
                     status_text = payload
                     tone = "error" if "Ошибка" in status_text else "success"
                 self._finish_operation(status_text, tone)
+            elif message.startswith("__REPORT_PATH__:"):
+                path_value = message.split(":", 1)[1].strip()
+                if path_value and self._network_live_dashboard_path:
+                    self._network_report_path_for_dashboard = path_value
+                    self._append_network_scan_event(f"Report ready: {path_value}")
             elif message.startswith("__SOURCES__:"):
                 self.source_status.set(message.split(":", 1)[1])
             else:
                 self.progress.configure(
                     value=progress_value_for_message(message, self._current_progress_value())
                 )
+                if self._network_live_dashboard_path:
+                    lowered = message.casefold()
+                    if (
+                        lowered.startswith("running collector:")
+                        or "network intelligence" in lowered
+                        or "starting traffic capture" in lowered
+                        or "traffic capture completed" in lowered
+                        or "running nmap" in lowered
+                        or "nmap scan" in lowered
+                        or "audit completed" in lowered
+                    ):
+                        self._append_network_scan_event(message)
                 progress_status = progress_status_for_message(message)
                 if progress_status:
                     self._set_progress_status(progress_status)

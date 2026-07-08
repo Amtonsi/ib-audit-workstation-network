@@ -18,12 +18,22 @@ from .models import CollectorDiagnostic, InventoryObject
 from .network_scan import NetworkScanConfig, collect_network_intelligence as collect_network_intelligence_data
 
 
+ProgressCallback = Callable[[str], None] | None
+CollectorExecutor = Callable[[ProgressCallback], tuple[list[InventoryObject], list[CollectorDiagnostic]]]
+
+
 @dataclass(frozen=True)
 class Collector:
     name: str
     category_id: str
     category_name: str
-    func: Callable[[], tuple[list[InventoryObject], list[CollectorDiagnostic]]]
+    func: CollectorExecutor
+
+
+def _collector_without_progress(
+    func: Callable[[], tuple[list[InventoryObject], list[CollectorDiagnostic]]],
+) -> CollectorExecutor:
+    return lambda _progress=None: func()
 
 
 def parse_wmic_list(text: str) -> list[dict[str, str]]:
@@ -952,18 +962,26 @@ def collect_data_providers() -> tuple[list[InventoryObject], list[CollectorDiagn
     return objects, diagnostics
 
 
-def get_collectors(network_scan_config: NetworkScanConfig | None = None) -> list[Collector]:
+def get_collectors(
+    network_scan_config: NetworkScanConfig | None = None, *, only_network: bool = False
+) -> list[Collector]:
     from .security_collectors import collect_security_inventory
 
     collectors = [
-        Collector("system_hardware", "g", "System and Hardware", collect_system_hardware),
-        Collector("software_execution", "s", "Software, Updates, and Execution", collect_software_execution),
-        Collector("accounts_security", "u", "Accounts and Security", collect_accounts_security),
-        Collector("network_resources", "t", "Network and Local Resources", collect_network_resources),
-        Collector("events_environment", "e", "Events and Activity", collect_events_environment),
-        Collector("data_providers", "C", "Data Providers", collect_data_providers),
-        Collector("security_posture", "x", "Structured Security Posture", collect_security_inventory),
+        Collector("network_resources", "t", "Network and Local Resources", _collector_without_progress(collect_network_resources)),
     ]
+
+    if not only_network:
+        collectors.extend(
+            [
+                Collector("system_hardware", "g", "System and Hardware", _collector_without_progress(collect_system_hardware)),
+                Collector("software_execution", "s", "Software, Updates, and Execution", _collector_without_progress(collect_software_execution)),
+                Collector("accounts_security", "u", "Accounts and Security", _collector_without_progress(collect_accounts_security)),
+                Collector("events_environment", "e", "Events and Activity", _collector_without_progress(collect_events_environment)),
+                Collector("data_providers", "C", "Data Providers", _collector_without_progress(collect_data_providers)),
+                Collector("security_posture", "x", "Structured Security Posture", _collector_without_progress(collect_security_inventory)),
+            ]
+        )
 
     if network_scan_config and network_scan_config.enabled:
         collectors.append(
@@ -971,7 +989,7 @@ def get_collectors(network_scan_config: NetworkScanConfig | None = None) -> list
                 "network_intelligence",
                 "N",
                 "Network Intelligence",
-                lambda: collect_network_intelligence(network_scan_config),
+                lambda progress=None: collect_network_intelligence_data(network_scan_config, progress=progress),
             )
         )
     return collectors

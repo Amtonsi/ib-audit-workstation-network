@@ -35,7 +35,10 @@ def build_release_zip(
     vuln = Path(vulnerability_dir)
     guide = Path(user_guide)
     license_path = Path(license_file)
-    required = [app / "IBAuditWorkstation.exe", vuln / "vulnerability_sources.db", guide, license_path]
+    app_executable = app / "IBAuditWorkstation.exe" if app.is_dir() else app
+    if app_executable.suffix.lower() != ".exe":
+        app_executable = app / "IBAuditWorkstation.exe"
+    required = [app_executable, vuln / "vulnerability_sources.db", guide, license_path]
     missing = [str(path) for path in required if not path.exists()]
     if missing:
         raise FileNotFoundError("Missing release inputs: " + ", ".join(missing))
@@ -52,8 +55,11 @@ def build_release_zip(
     if output.exists():
         output.unlink()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
-        for path in iter_files(app):
-            add_file(archive, path, f"IBAuditWorkstation/{path.relative_to(app).as_posix()}")
+        if app.is_dir():
+            for path in iter_files(app):
+                add_file(archive, path, f"IBAuditWorkstation/{path.relative_to(app).as_posix()}")
+        else:
+            add_file(archive, app_executable, f"IBAuditWorkstation/{app_executable.name}")
         for path in iter_files(vuln):
             add_file(archive, path, f"vulnerability-database/{path.relative_to(vuln).as_posix()}")
         add_file(archive, guide, f"docs/{guide.name}")

@@ -5,10 +5,23 @@ import ipaddress
 import re
 import shlex
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from dataclasses import dataclass
 
-from .commands import run_command, run_powershell_json
+from .commands import command_exists, resolve_tool_command, run_command, run_powershell_json
 from .models import CollectorDiagnostic
+
+
+ProgressCallback = Callable[[str], None] | None
+
+
+def _emit_progress(progress: ProgressCallback, message: str) -> None:
+    if progress is None:
+        return
+    try:
+        progress(message)
+    except Exception:
+        pass
 
 
 def _parse_int(value: str | int | None, default: int) -> int:
@@ -39,6 +52,7 @@ class NetworkScanConfig:
     capture_filter: str = ""
     capture_no_name_resolution: bool = True
     capture_quiet: bool = True
+    capture_disabled_interfaces: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -131,6 +145,27 @@ TSHARK_FIELDS = [
 ]
 
 
+def _normalize_interface_token(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def _disabled_interface_tokens(raw_interfaces: tuple[str, ...] | list[str] | set[str] | None) -> set[str]:
+    return {_normalize_interface_token(item) for item in (raw_interfaces or ()) if _normalize_interface_token(item)}
+
+
+def _is_candidate_disabled(candidate: dict[str, str], disabled_tokens: set[str]) -> bool:
+    if not disabled_tokens:
+        return False
+    for value in (
+        candidate.get("index", ""),
+        candidate.get("name", ""),
+        candidate.get("description", ""),
+    ):
+        if _normalize_interface_token(value) in disabled_tokens:
+            return True
+    return False
+
+
 def _diagnostic(message: str, source: str = "nmap / tshark") -> CollectorDiagnostic:
     return CollectorDiagnostic("network_scan", "info", message, source)
 
@@ -139,43 +174,50 @@ def _warning(message: str, source: str = "nmap / tshark") -> CollectorDiagnostic
     return CollectorDiagnostic("network_scan", "warning", message, source)
 
 
-def build_nmap_command(config: NetworkScanConfig, targets: list[str]) -> list[str]:
-    command = ["nmap"]
+def build_nmap_command(
+    config: NetworkScanConfig,
+    targets: list[str],
+    command: str | None = None,
+) -> list[str]:
+    command_path = command or "nmap"
+    command_list = [command_path]
     if config.nmap_no_dns:
-        command.append("-n")
+        command_list.append("-n")
     if config.nmap_skip_host_discovery:
-        command.append("-Pn")
+        command_list.append("-Pn")
     timing = str(config.nmap_timing or "").strip()
     if timing:
-        command.append(timing if timing.startswith("-") else f"-{timing}")
+        command_list.append(timing if timing.startswith("-") else f"-{timing}")
     if config.nmap_open_only:
-        command.append("-open")
-    command.extend(["-oX", "-", "-p", _normalize_ports(config.ports)])
+        command_list.append("-open")
+    command_list.extend(["-oX", "-", "-p", _normalize_ports(config.ports)])
     if config.nmap_service_detection:
-        command.append("-sV")
+        command_list.append("-sV")
     if config.nmap_os_detection:
-        command.append("-O")
+        command_list.append("-O")
     if config.extra_args:
         try:
-            command.extend(shlex.split(config.extra_args))
+            command_list.extend(shlex.split(config.extra_args))
         except ValueError:
-            command.extend(config.extra_args.split())
-    command.extend(targets)
-    return command
+            command_list.extend(config.extra_args.split())
+    command_list.extend(targets)
+    return command_list
 
 
 def build_tshark_command(
     config: NetworkScanConfig,
     interface: str,
     fields: list[str] | None = None,
+    command: str | None = None,
 ) -> list[str]:
     selected_fields = list(fields or TSHARK_FIELDS)
-    command = ["tshark", "-i", interface]
+    command_path = command or "tshark"
+    command_list = [command_path, "-i", interface]
     if config.capture_no_name_resolution:
-        command.append("-n")
+        command_list.append("-n")
     if config.capture_quiet:
-        command.append("-q")
-    command.extend(
+        command_list.append("-q")
+    command_list.extend(
         [
             "-a",
             f"duration:{max(1, _parse_int(config.capture_duration, 20))}",
@@ -189,10 +231,10 @@ def build_tshark_command(
             "header=y",
         ]
     )
-    command.extend(item for field in selected_fields for item in ("-e", field))
+    command_list.extend(item for field in selected_fields for item in ("-e", field))
     if config.capture_filter:
-        command.extend(["-f", config.capture_filter])
-    return command
+        command_list.extend(["-f", config.capture_filter])
+    return command_list
 
 
 def parse_local_network_targets(
@@ -324,6 +366,7 @@ def _local_networks_from_ipconfig() -> list[str]:
 
 def collect_network_services(
     config: NetworkScanConfig,
+    progress: ProgressCallback = None,
 ) -> tuple[list[NetworkScanService], list[CollectorDiagnostic]]:
     diagnostics: list[CollectorDiagnostic] = []
     if not config.enabled:
@@ -333,14 +376,43 @@ def collect_network_services(
     targets = parse_local_network_targets(config.targets)
     if not targets:
         return [], [_warning("No network targets discovered")]
-    command = build_nmap_command(config, targets)
+    _emit_progress(progress, f"Nmap scan started on {len(targets)} target(s)")
+    nmap_command = resolve_tool_command("nmap")
+    if not command_exists(nmap_command):
+        return [], [_warning("Nmap executable not found. Place nmap.exe in tools/nmap or install Nmap in PATH.")]
+    command = build_nmap_command(config, targets, command=nmap_command)
+    _emit_progress(progress, "Running Nmap service discovery")
     result = run_command(command, timeout=max(60, int(config.nmap_timeout)))
     if not result.ok:
-        return [], [_warning(f"Nmap execution failed: {result.stderr or result.stdout}")]
+        fail_message = result.stderr or result.stdout
+        if config.nmap_os_detection and _is_npcap_os_detection_error(fail_message):
+            fallback_command = _strip_nmap_arg(command, "-O")
+            fallback_result = run_command(fallback_command, timeout=max(60, int(config.nmap_timeout)))
+            if fallback_result.ok:
+                services = _parse_nmap_xml(fallback_result.stdout)
+                diagnostics.append(
+                    _warning("Nmap OS detection is unavailable in this environment; retrying without OS detection")
+                )
+                _emit_progress(progress, "Nmap OS detection skipped (Npcap not available)")
+                if services:
+                    diagnostics.append(
+                        _diagnostic(
+                            f"Completed Nmap scan on {len(targets)} target(s) without OS detection, found {len(services)} ports/services",
+                            source="nmap",
+                        )
+                    )
+                else:
+                    diagnostics.append(_warning("Fallback Nmap scan completed, but no service data was parsed"))
+                return services, diagnostics
+            diagnostics.append(_warning(f"Fallback Nmap scan failed: {fallback_result.stderr or fallback_result.stdout}"))
+            return [], diagnostics
+        return [], [_warning(f"Nmap execution failed: {fail_message}")]
     services = _parse_nmap_xml(result.stdout)
     if not services:
         diagnostics.append(_warning("Nmap executed, but no service data was parsed"))
+        _emit_progress(progress, "Nmap completed but no services were discovered")
     else:
+        _emit_progress(progress, f"Nmap completed: found {len(services)} ports/services")
         diagnostics.append(
             _diagnostic(
                 f"Completed Nmap scan on {len(targets)} target(s), found {len(services)} ports/services",
@@ -363,6 +435,24 @@ def _normalize_text(value: object) -> str:
     value = "" if value is None else str(value)
     value = value.replace("\r", " ").replace("\n", " ").strip()
     return re.sub(r"\s+", " ", value)
+
+
+def _strip_nmap_arg(command: list[str], target_arg: str) -> list[str]:
+    return [item for item in command if item != target_arg]
+
+
+def _is_npcap_os_detection_error(message: str) -> bool:
+    lowered = (message or "").casefold()
+    return (
+        "npcap" in lowered
+        and (
+            "could not import all necessary npcap functions" in lowered
+            or "tcp/ip fingerprinting (for os scan) requires npcap" in lowered
+            or "npcap driver service must be started" in lowered
+            or "resorting to connect() mode" in lowered
+            or "for os scan" in lowered
+        )
+    )
 
 
 def _parse_nmap_xml(raw: str) -> list[NetworkScanService]:
@@ -452,19 +542,39 @@ def _parse_nmap_xml(raw: str) -> list[NetworkScanService]:
 
 def collect_network_capture(
     config: NetworkScanConfig,
+    progress: ProgressCallback = None,
 ) -> tuple[list[NetworkScanService], list[CollectorDiagnostic]]:
     diagnostics: list[CollectorDiagnostic] = []
     if not config.enabled or not config.capture_enabled:
         return [], [_diagnostic("Network traffic capture is disabled")]
+    tshark_command = resolve_tool_command("tshark")
+    disabled_interfaces = _disabled_interface_tokens(config.capture_disabled_interfaces)
     interface = (config.capture_interface or "").strip()
+    if not command_exists(tshark_command):
+        return [], [_warning("tshark executable not found. Place tshark.exe in tools/wireshark or tools/tshark and install Wireshark/tshark in PATH.")]
+    if interface and _normalize_interface_token(interface) in disabled_interfaces:
+        return [], [_warning(f"Capture interface '{interface}' is disabled in settings. Capture skipped.")]
     if not interface:
-        candidates = _detect_tshark_interfaces()
-        if candidates:
-            interface = candidates[0]["name"]
-        else:
-            return [], [_warning("tshark interfaces are not available")]
+        candidates, interface_error = _detect_tshark_interfaces(tshark_command=tshark_command)
+        if not candidates:
+            return [], [_warning(interface_error or "tshark interfaces are not available")]
+        for candidate in candidates:
+            if not _is_candidate_disabled(candidate, disabled_interfaces):
+                interface = candidate["name"]
+                break
+        if not interface:
+            return [], [_warning("All discovered tshark interfaces are disabled in settings.")]
+        if disabled_interfaces:
+            _emit_progress(
+                progress,
+                "Selected capture interface avoids disabled interfaces list",
+            )
     fields = list(TSHARK_FIELDS)
-    command = build_tshark_command(config, interface, fields)
+    _emit_progress(
+        progress,
+        f"Starting traffic capture on interface '{interface}' for {config.capture_duration} second(s)",
+    )
+    command = build_tshark_command(config, interface, fields, command=tshark_command)
     result = run_command(command, timeout=max(5, _parse_int(config.capture_timeout, 120)))
     if not result.ok:
         return [], [_warning(f"tshark execution failed: {result.stderr or result.stdout}")]
@@ -473,7 +583,9 @@ def collect_network_capture(
     process_index = _tcp_connection_process_index()
     if not flows:
         diagnostics.append(_warning("Capture was executed but no packets were parsed"))
+        _emit_progress(progress, "Traffic capture completed: no packets captured")
     else:
+        _emit_progress(progress, f"Traffic capture completed: {len(flows)} flow row(s)")
         diagnostics.append(
             _diagnostic(
                 f"Captured {len(flows)} traffic flow(s) via {interface}",
@@ -516,10 +628,20 @@ def collect_network_capture(
     return objects, diagnostics
 
 
-def _detect_tshark_interfaces() -> list[dict[str, str]]:
-    result = run_command(["tshark", "-D"], timeout=10)
+def detect_tshark_interfaces(
+    tshark_command: str | None = None,
+) -> tuple[list[dict[str, str]], str | None]:
+    command = resolve_tool_command("tshark") if tshark_command is None else tshark_command
+    if not command_exists(command):
+        return [], "tshark executable not found. Place tshark.exe in tools/wireshark or tools/tshark and install Wireshark/tshark in PATH."
+    return _detect_tshark_interfaces(tshark_command=command)
+
+
+def _detect_tshark_interfaces(tshark_command: str = "tshark") -> tuple[list[dict[str, str]], str | None]:
+    result = run_command([tshark_command, "-D"], timeout=10)
     if not result.ok:
-        return []
+        message = (result.stderr or result.stdout or "tshark interface discovery failed").strip()
+        return [], f"tshark -D failed: {message}"
     interfaces: list[dict[str, str]] = []
     for raw_line in result.stdout.splitlines():
         line = (raw_line or "").strip()
@@ -534,7 +656,9 @@ def _detect_tshark_interfaces() -> list[dict[str, str]]:
         description = parts[2] if len(parts) > 2 else line
         if description:
             interfaces.append({"index": index, "name": index, "description": description})
-    return interfaces
+    if not interfaces:
+        return [], "tshark interfaces are not available"
+    return interfaces, None
 
 
 def _parse_tshark_csv(raw: str, fields: list[str] | None = None) -> list[dict[str, str]]:
@@ -725,11 +849,14 @@ def _apply_local_context(
 
 def collect_network_intelligence(
     config: NetworkScanConfig,
+    progress: ProgressCallback = None,
 ) -> tuple[list[NetworkScanService], list[NetworkScanService], list[CollectorDiagnostic]]:
     if not config.enabled:
         return [], [], [_diagnostic("Network scan is disabled")]
-    services, diagnostics_services = collect_network_services(config)
-    captures, diagnostics_capture = collect_network_capture(config)
+    _emit_progress(progress, "Network intelligence scan started")
+    services, diagnostics_services = collect_network_services(config, progress=progress)
+    captures, diagnostics_capture = collect_network_capture(config, progress=progress)
+    _emit_progress(progress, f"Network intelligence completed: {len(services)} services, {len(captures)} captured flows")
     return services, captures, [*diagnostics_services, *diagnostics_capture]
 
 
@@ -743,6 +870,7 @@ __all__ = [
     "collect_network_intelligence",
     "collect_network_capture",
     "collect_network_services",
+    "detect_tshark_interfaces",
     "parse_local_network_targets",
     "_parse_nmap_xml",
     "_parse_tshark_csv",

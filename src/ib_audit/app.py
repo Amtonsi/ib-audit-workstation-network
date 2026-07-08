@@ -365,6 +365,7 @@ def run_audit(
     online_sources: bool = True,
     vulnerability_mode: str = VULNERABILITY_MODE_FULL,
     network_scan: NetworkScanConfig | None = None,
+    network_only: bool = False,
     open_report: bool = False,
     progress=None,
     cancel_token: CancellationToken | None = None,
@@ -379,6 +380,7 @@ def run_audit(
         progress=progress,
         cancel_token=token,
         network_scan_config=network_scan,
+        only_network=network_only,
     )
     run, inventory, diagnostics = engine.run()
     if progress:

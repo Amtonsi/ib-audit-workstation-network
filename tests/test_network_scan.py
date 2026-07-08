@@ -1,12 +1,16 @@
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.abspath("src"))
 
+from ib_audit.commands import CommandResult
 from ib_audit.network_scan import (
     NETWORK_COMMAND_OPTIONS,
     NetworkScanConfig,
+    collect_network_capture,
+    collect_network_services,
     _parse_nmap_xml,
     _parse_tshark_csv,
     build_nmap_command,
@@ -125,6 +129,47 @@ class NetworkScanParserTests(unittest.TestCase):
         self.assertEqual(200, outbound["Bytes"])
         self.assertEqual("outbound", outbound["Direction"])
         self.assertEqual("external", outbound["Destination Scope"])
+
+    def test_nmap_falls_back_without_os_detection_when_npcap_missing(self):
+        config = NetworkScanConfig(
+            enabled=True,
+            targets=("192.168.56.10",),
+            nmap_os_detection=True,
+            nmap_timeout=1,
+        )
+        xml = """<?xml version="1.0"?>
+<nmaprun><host><status state="up"/><address addr="192.168.56.10" addrtype="ipv4"/><hostnames></hostnames><ports>
+<port protocol="tcp" portid="80"><state state="open"/><service name="http" product="Apache" version="2.4"/></port>
+</ports></host></nmaprun>"""
+
+        first = CommandResult(["nmap"], 1, "", "TCP/IP fingerprinting (for OS scan) requires Npcap, but it seems to be missing.")
+        second = CommandResult(["nmap"], 0, xml, "")
+
+        with patch("ib_audit.network_scan.resolve_tool_command", return_value="nmap"), \
+                patch("ib_audit.network_scan.command_exists", return_value=True), \
+                patch("ib_audit.network_scan.run_command", side_effect=[first, second]):
+            services, diagnostics = collect_network_services(config)
+
+        self.assertEqual(1, len(services))
+        self.assertEqual("192.168.56.10", services[0].fields["Host IP"])
+        self.assertTrue(any("OS detection" in item.message for item in diagnostics))
+
+    def test_tshark_discovery_failure_is_reported_with_detail(self):
+        config = NetworkScanConfig(
+            enabled=True,
+            targets=("192.168.56.0/24",),
+            capture_enabled=True,
+        )
+        tshark_fail = CommandResult(["tshark", "-D"], 1, "", "access denied while opening capture device")
+
+        with patch("ib_audit.network_scan.resolve_tool_command", return_value="tshark"), \
+                patch("ib_audit.network_scan.command_exists", return_value=True), \
+                patch("ib_audit.network_scan.run_command", return_value=tshark_fail):
+            captures, diagnostics = collect_network_capture(config)
+
+        self.assertEqual([], captures)
+        self.assertEqual(1, len(diagnostics))
+        self.assertIn("tshark -D failed", diagnostics[0].message)
 
 
 if __name__ == "__main__":

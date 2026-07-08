@@ -263,8 +263,10 @@ tshark -i 3 -n -q -a duration:20 -T fields -E separator=, -E quote=d -E header=y
 
 Требования для сетевого режима:
 
-- установленный `nmap` и доступность команды `nmap` в `PATH`;
-- установленный Wireshark/tshark и доступность команды `tshark` в `PATH`;
+- либо установленный `nmap` и доступность команды `nmap` в `PATH`,
+- либо `nmap.exe` в каталоге `tools/nmap` (для запуска без установки системного пакета);
+- либо установленный Wireshark/tshark и доступность команды `tshark` в `PATH`;
+- либо `tshark.exe` в каталоге `tools/wireshark` или `tools/tshark`;
 - запуск от администратора для более полного захвата трафика и определения сетевых сведений;
 - разрешение на сканирование выбранного диапазона.
 
@@ -355,7 +357,7 @@ python scripts/update_vulnerability_database.py --output outputs\vulnerability-d
 
 ```powershell
 python -m pip install pyinstaller
-python -m PyInstaller build\pyinstaller\IBAuditWorkstation.spec --noconfirm --clean --distpath outputs\dist --workpath build\pyinstaller\work-batch-html
+python -m PyInstaller build\pyinstaller\IBuditWorkstation.spec --onefile --noconfirm --clean --distpath outputs\dist --workpath build\pyinstaller\work-batch-html
 ```
 
 Не регенерируйте spec через `--name ... --specpath`: PyInstaller заменит список `datas`, и собранное приложение не сможет загрузить правила аудита.

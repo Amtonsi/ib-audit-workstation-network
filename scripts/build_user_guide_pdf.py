@@ -841,7 +841,7 @@ def build_pdf(output_path: str | Path) -> Path:
         ("CLI-аудит", "python run_audit.py --no-open"),
         ("Offline-аудит", "python run_audit.py --offline --no-open"),
         ("Обновление БД", "python scripts/update_vulnerability_database.py --output outputs\\vulnerability-database\nпереиспользует CPE Dictionary; большой CPE Match включается флагом --with-cpe-match"),
-        ("Сборка EXE", "python -m PyInstaller build\\pyinstaller\\IBAuditWorkstation.spec --noconfirm --clean --distpath outputs\\dist --workpath build\\pyinstaller\\work-batch-html"),
+        ("Сборка EXE", "python -m PyInstaller build\\pyinstaller\\IBAuditWorkstation.spec --onefile --noconfirm --clean --distpath outputs\\dist --workpath build\\pyinstaller\\work-batch-html"),
         ("Сборка PDF", "python scripts\\build_user_guide_pdf.py --output docs\\IBAuditWorkstation_UserGuide_RU.pdf"),
         ("Тесты", "python -m unittest discover -s tests"),
     ]
@@ -889,3 +889,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

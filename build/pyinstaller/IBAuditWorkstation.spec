@@ -5,7 +5,10 @@ a = Analysis(
     ['..\\..\\run_app.py'],
     pathex=['src'],
     binaries=[],
-    datas=[('../../src/ib_audit/rulepacks/*.json', 'ib_audit/rulepacks')],
+    datas=[
+        ('../../src/ib_audit/rulepacks/*.json', 'ib_audit/rulepacks'),
+        ('../../tools', 'tools'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -19,8 +22,10 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
     [],
-    exclude_binaries=True,
     name='IBAuditWorkstation',
     debug=False,
     bootloader_ignore_signals=False,
@@ -32,13 +37,4 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-)
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='IBAuditWorkstation',
 )
