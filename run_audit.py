@@ -114,8 +114,6 @@ def main() -> int:
     )
     print(f"DB: {result['db_path']}")
     print(f"Report: {result['report_path']}")
-    if result.get("batch_report_path"):
-        print(f"Batch Report: {result['batch_report_path']}")
     print(f"Inventory objects: {result['inventory_count']}")
     print(f"Diagnostics: {result['diagnostic_count']}")
     print(f"Vulnerabilities: {result['vulnerability_count']}")
