@@ -10,7 +10,7 @@ import zipfile
 from dataclasses import asdict
 from pathlib import Path
 
-from .assessment import AssessmentService
+from .assessment import AssessmentBundle, AssessmentService
 from .batch import (
     BatchAssessment,
     BatchDocumentFailure,
@@ -21,7 +21,7 @@ from .batch import (
 from .cancellation import AuditCancelled, CancellationToken
 from .engine import AuditEngine
 from .fstec import FstecBduClient
-from .models import AuditRun, ReportRecord, utc_now
+from .models import AuditRun, CollectorDiagnostic, InventoryObject, ReportRecord, utc_now
 from .report_import import ReportImportError, import_audit_report
 from .repository import SQLiteRepository
 from .report import HtmlReportBuilder

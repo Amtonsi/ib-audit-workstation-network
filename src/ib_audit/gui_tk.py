@@ -22,6 +22,7 @@ from .app import (
 )
 from .batch import BatchProgress
 from .cancellation import AuditCancelled, CancellationToken
+from .commands import terminate_network_tool_processes
 from .models import SourceSnapshot
 from .network_scan import (
     DEFAULT_LOCAL_NMAP_PORTS,
@@ -30,7 +31,6 @@ from .network_scan import (
     detect_tshark_interfaces,
     local_machine_nmap_targets,
 )
-from .npcap import NPCAP_DOWNLOAD_URL, launch_npcap_installer, query_npcap_status, resolve_npcap_installer
 
 
 SOURCE_LABELS = ("CISA KEV", "NVD", "ФСТЭК БДУ")
@@ -423,6 +423,7 @@ class AuditWindow:
         _enable_high_dpi_awareness()
         _frozen_startup_log("dpi awareness ready")
         self.root = Tk()
+        self.root.protocol("WM_DELETE_WINDOW", self._close_application)
         _frozen_startup_log("tk root created")
         self.root.title("IB Audit Workstation")
         self.window_bounds = window_bounds_for_screen(
@@ -1504,43 +1505,8 @@ class AuditWindow:
         return True
 
     def _handle_missing_npcap_for_network_scan(self, network_scan: NetworkScanConfig | None) -> bool:
-        # Normal network audit uses safe Windows connection telemetry instead of
-        # Npcap/tshark live packet capture. Npcap is therefore not required here:
-        # repeated bugchecks showed that even one selected interface can crash in
-        # the kernel driver path, which Python cannot catch safely.
+        """Keep routine audits on safe Windows telemetry without driver prompts."""
         return False
-        if network_scan is None or not network_scan.capture_enabled or not hasattr(self, "root"):
-            return False
-        status = query_npcap_status()
-        if not status.install_required:
-            return False
-
-        installer = resolve_npcap_installer()
-        if installer is not None:
-            install_now = messagebox.askyesno(
-                "Npcap требуется для захвата",
-                "Для захвата сетевого трафика нужен драйвер Npcap.\n\n"
-                "Установить Npcap сейчас? После установки потребуется повторно запустить аудит.",
-            )
-            if install_now:
-                result = launch_npcap_installer(installer)
-                if result.ok:
-                    messagebox.showinfo(
-                        "Npcap",
-                        "Установка Npcap запущена. После установки повторно запустите аудит.",
-                    )
-                else:
-                    messagebox.showwarning("Npcap", result.message)
-            return True
-
-        open_download = messagebox.askyesno(
-            "Npcap требуется для захвата",
-            "Для захвата сетевого трафика нужен драйвер Npcap, но встроенный установщик не найден.\n\n"
-            "Открыть официальный сайт Npcap для ручной установки?",
-        )
-        if open_download:
-            webbrowser.open(NPCAP_DOWNLOAD_URL)
-        return True
 
     def _selected_vulnerability_mode(self) -> str:
         mode = self.vulnerability_mode.get()
@@ -2093,7 +2059,6 @@ class AuditWindow:
         if nodes:
             limited_nodes = nodes[:12]
             for index, node in enumerate(limited_nodes):
-                angle = ((index / max(1, len(limited_nodes))) * 2 * 3.141592653589793) - 1.45
                 radius_x = width * 0.34
                 radius_y = height * 0.23
                 x = center_x + radius_x * (0.6 + index * 0.02) * (1 if index % 2 else -1) * 0.35
@@ -2615,6 +2580,17 @@ class AuditWindow:
             webbrowser.open(Path(self.last_report).resolve().as_uri())
             return
         messagebox.showinfo("Отчёт", "Итоговый отчёт ещё не сформирован.")
+
+    def _close_application(self) -> None:
+        """Cancel active work and stop only network tools started by this app."""
+        token = getattr(self, "active_cancel_token", None)
+        if token is not None:
+            token.cancel()
+        terminate_network_tool_processes()
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
 
     def _close_network_scan_live_window(self) -> None:
         if not self._network_live_window:

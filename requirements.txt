@@ -2,3 +2,4 @@
 # The delivered app runs with the standard-library tkinter GUI.
 PySide6>=6.7; python_version < "3.14"
 pyinstaller>=6.0
+defusedxml>=0.7.1,<1

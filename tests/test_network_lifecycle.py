@@ -9,12 +9,12 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from ib_audit.commands import (
+from ib_audit.commands import (  # noqa: E402
     register_network_tool_process,
     run_command,
     terminate_network_tool_processes,
 )
-from ib_audit.network_scan import (
+from ib_audit.network_scan import (  # noqa: E402
     DEFAULT_LOCAL_NMAP_PORTS,
     DEFAULT_LOCAL_NMAP_TARGETS,
     NetworkScanConfig,

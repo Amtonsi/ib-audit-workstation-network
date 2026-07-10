@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Iterable
 from xml.etree import ElementTree
 
+from .safe_xml import fromstring as safe_xml_fromstring
+
 
 @dataclass(frozen=True)
 class FstecProduct:
@@ -214,7 +216,7 @@ def _read_shared_strings(archive: zipfile.ZipFile) -> list[str]:
         payload = archive.read("xl/sharedStrings.xml")
     except KeyError:
         return []
-    root = ElementTree.fromstring(payload)
+    root = safe_xml_fromstring(payload)
     strings: list[str] = []
     for item in _children(root, "si"):
         strings.append("".join(node.text or "" for node in item.iter() if _local(node.tag) == "t"))
@@ -233,7 +235,7 @@ def _first_sheet_name(archive: zipfile.ZipFile) -> str:
 
 
 def _read_sheet_rows(payload: bytes, shared_strings: list[str]) -> list[list[str]]:
-    root = ElementTree.fromstring(payload)
+    root = safe_xml_fromstring(payload)
     rows: list[list[str]] = []
     for row in root.iter():
         if _local(row.tag) != "row":
@@ -301,9 +303,9 @@ def _header_mapping(row: list[str]) -> dict[str, int]:
     mapping: dict[str, int] = {}
     for index, value in enumerate(row):
         normalized = _normalize_header(value)
-        for field, aliases in HEADER_ALIASES.items():
-            if field not in mapping and any(alias == normalized or alias in normalized for alias in aliases):
-                mapping[field] = index
+        for field_name, aliases in HEADER_ALIASES.items():
+            if field_name not in mapping and any(alias == normalized or alias in normalized for alias in aliases):
+                mapping[field_name] = index
     return mapping
 
 

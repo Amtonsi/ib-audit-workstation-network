@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from legal_pdf_pages import draw_legal_pages
+
 import argparse
 from datetime import date
 from pathlib import Path
@@ -62,7 +64,7 @@ def build_pdf(output_path: str | Path) -> Path:
     c = canvas.Canvas(str(output), pagesize=landscape(A4))
     c.setTitle("IB Audit Workstation - подробная инструкция")
     c.setAuthor("Абдрахманов Амаль Даулетович")
-    c.setSubject("Логика работы, запуск, GitHub, пакетная HTML-проверка")
+    c.setSubject("Логика работы, запуск, GitHub, пакетная HTML-проверка, правовые ограничения")
 
     ink = colors.HexColor("#172126")
     muted = colors.HexColor("#64748B")
@@ -70,7 +72,6 @@ def build_pdf(output_path: str | Path) -> Path:
     panel = colors.white
     line = colors.HexColor("#DCE3E7")
     teal = colors.HexColor("#0F766E")
-    teal_dark = colors.HexColor("#115E59")
     blue = colors.HexColor("#2563EB")
     violet = colors.HexColor("#6D4AFF")
     amber = colors.HexColor("#B45309")
@@ -963,6 +964,8 @@ def build_pdf(output_path: str | Path) -> Path:
         leading=13,
     )
     c.showPage()
+
+    draw_legal_pages(c)
 
     c.save()
     return output

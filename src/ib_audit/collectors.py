@@ -13,7 +13,7 @@ from io import StringIO
 from pathlib import Path
 from typing import Callable
 
-from .commands import CommandResult, run_command, run_powershell_json
+from .commands import run_command, run_powershell_json
 from .models import CollectorDiagnostic, InventoryObject
 from .network_scan import NetworkScanConfig, collect_network_intelligence as collect_network_intelligence_data
 
@@ -220,7 +220,7 @@ def _split_endpoint(endpoint: str) -> tuple[str, str]:
     if ":" not in endpoint:
         return endpoint, ""
     address, port = endpoint.rsplit(":", 1)
-    return address.strip("[]") or "0.0.0.0", port
+    return address.strip("[]") or "0.0.0.0", port  # nosec B104
 
 
 def _friendly_netstat_state(state: str) -> str:

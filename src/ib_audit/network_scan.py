@@ -21,7 +21,7 @@ from .commands import (
     unregister_network_tool_process,
 )
 from .models import CollectorDiagnostic
-from .npcap import NPCAP_DOWNLOAD_URL, query_npcap_status
+from .safe_xml import fromstring as safe_xml_fromstring
 
 
 ProgressCallback = Callable[[str], None] | None
@@ -38,7 +38,7 @@ def local_machine_nmap_targets() -> tuple[str, ...]:
         addresses = []
     for address in addresses:
         value = str(address[4][0]).strip()
-        if value and value not in targets and value != "0.0.0.0":
+        if value and value not in targets and value != "0.0.0.0":  # nosec B104
             targets.append(value)
     return tuple(targets)
 
@@ -579,8 +579,8 @@ def _parse_nmap_xml(raw: str) -> list[NetworkScanService]:
     if not raw:
         return []
     try:
-        root = ET.fromstring(raw)
-    except ET.ParseError:
+        root = safe_xml_fromstring(raw)
+    except (ET.ParseError, ValueError):
         return []
     services: list[NetworkScanService] = []
     for host in root.findall("host"):
@@ -809,15 +809,26 @@ def _collect_tshark_live_traffic(
         packet_rows = 0
         emitted_rows = 0
         try:
-            assert process.stdout is not None
-            for raw_line in process.stdout:
+            stdout = process.stdout
+            if stdout is None:
+                diagnostics.append(
+                    _warning(
+                        f"tshark did not provide a packet stream for interface {interface}",
+                        source="tshark",
+                    )
+                )
+                process.kill()
+                raw_lines = ()
+            else:
+                raw_lines = stdout
+            for raw_line in raw_lines:
                 line = raw_line.rstrip("\r\n")
                 if not line:
                     continue
                 if header is None:
                     try:
                         parsed_header = next(csv.reader([line]))
-                    except Exception:
+                    except (csv.Error, StopIteration):
                         continue
                     header = [str(item) for item in parsed_header]
                     csv_lines.append(line)

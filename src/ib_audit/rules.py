@@ -122,7 +122,7 @@ def _industrial_protocol_exposed(obj: InventoryObject, value: object) -> bool:
         industrial = port in industrial_tcp_ports
     if not industrial:
         return False
-    return address in {"0.0.0.0", "::", "*", ""}
+    return address in {"0.0.0.0", "::", "*", ""}  # nosec B104
 
 
 def _rule_severity(rule: RuleDefinition, value: object, status: str) -> str:
@@ -203,7 +203,7 @@ class RuleEngine:
         if rule.evaluator == "sensitive_port_exposure":
             port = str(value).strip()
             address = str(obj.fields.get("Local Address", obj.fields.get("LocalAddress", ""))).strip()
-            return port not in {"135", "139", "445", "3389", "5985", "5986"} or address not in {"0.0.0.0", "::", "*"}
+            return port not in {"135", "139", "445", "3389", "5985", "5986"} or address not in {"0.0.0.0", "::", "*"}  # nosec B104
         if rule.evaluator == "safe_path_entries":
             entries = [entry for entry in str(value).split(";") if entry.strip()]
             return bool(entries) and all(_unsafe_path(entry) is False for entry in entries)

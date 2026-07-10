@@ -24,6 +24,7 @@ from .models import (
 )
 from .normalization import product_identity
 from .source_cache import SnapshotCache
+from .url_safety import validated_https_url
 from .vulnerability_database import is_vulnerability_database
 from .version_expression import matches_version_expression
 
@@ -38,8 +39,11 @@ class VulnerabilitySourceClient:
         self.used_snapshots: list[SourceSnapshot] = []
 
     def fetch_json(self, url: str, timeout: int = 25) -> dict[str, Any]:
-        request = urllib.request.Request(url, headers={"User-Agent": "IB-Audit-Desktop/0.1"})
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        request = urllib.request.Request(
+            validated_https_url(url),
+            headers={"User-Agent": "IB-Audit-Desktop/0.1"},
+        )
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # nosec B310
             return json.loads(response.read().decode("utf-8", errors="replace"))
 
     def fetch_cisa_kev(self) -> tuple[list[dict[str, Any]], list[CollectorDiagnostic]]:
@@ -705,7 +709,6 @@ class VulnerabilityCorrelator:
         matches: list[VulnerabilityMatch] = []
         seen: set[tuple[str, str, str]] = set()
         for obj in inventory:
-            haystack = self._inventory_text(obj)
             for record in kev_records:
                 vendor = str(record.get("vendorProject", ""))
                 product = str(record.get("product", ""))

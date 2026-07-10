@@ -1,15 +1,14 @@
 import argparse
 import os
 import sys
-from pathlib import Path
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(ROOT, "src")
 if SRC not in sys.path:
     sys.path.insert(0, SRC)
 
-from ib_audit.app import run_audit
-from ib_audit.network_scan import DEFAULT_LOCAL_NMAP_PORTS, NetworkScanConfig, local_machine_nmap_targets
+from ib_audit.app import run_audit  # noqa: E402
+from ib_audit.network_scan import DEFAULT_LOCAL_NMAP_PORTS, NetworkScanConfig, local_machine_nmap_targets  # noqa: E402
 
 
 def main() -> int:

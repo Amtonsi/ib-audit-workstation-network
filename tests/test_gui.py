@@ -470,18 +470,24 @@ class AuditWindowReportImportTests(unittest.TestCase):
         window.network_capture_enabled.set(True)
         window.network_capture_interface.set("3")
 
-        status = type(
-            "NpcapStatusStub",
-            (),
-            {"installed": False, "install_required": True, "message": "Npcap is not installed"},
-        )()
-        with patch("ib_audit.gui_tk.query_npcap_status", return_value=status), \
-                patch("ib_audit.gui_tk.messagebox.askyesno") as ask, \
+        with patch("ib_audit.gui_tk.messagebox.askyesno") as ask, \
                 patch.object(window, "_start_network_scan_live_window"):
             window._start(True)
 
         ask.assert_not_called()
         thread_factory.assert_called_once()
+
+    @patch("ib_audit.gui_tk.terminate_network_tool_processes")
+    def test_close_application_cancels_work_and_stops_network_tools(self, stop_tools):
+        window = self._window()
+        window.root = Mock()
+        window.active_cancel_token = CancellationToken()
+
+        window._close_application()
+
+        self.assertTrue(window.active_cancel_token.is_cancelled())
+        stop_tools.assert_called_once_with()
+        window.root.destroy.assert_called_once_with()
 
     def test_capture_only_network_config_disables_nmap_phase(self):
         window = self._window()
