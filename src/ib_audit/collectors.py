@@ -827,8 +827,9 @@ def collect_network_resources() -> tuple[list[InventoryObject], list[CollectorDi
 
 def collect_network_intelligence(
     config: NetworkScanConfig,
+    progress: ProgressCallback = None,
 ) -> tuple[list[InventoryObject], list[CollectorDiagnostic]]:
-    services, captures, diagnostics = collect_network_intelligence_data(config)
+    services, captures, diagnostics = collect_network_intelligence_data(config, progress=progress)
     if not services and not captures:
         return [], diagnostics
     objects: list[InventoryObject] = []
@@ -967,9 +968,24 @@ def get_collectors(
 ) -> list[Collector]:
     from .security_collectors import collect_security_inventory
 
-    collectors = [
-        Collector("network_resources", "t", "Network and Local Resources", _collector_without_progress(collect_network_resources)),
-    ]
+    collectors: list[Collector] = []
+    network_intelligence_collector = (
+        Collector(
+            "network_intelligence",
+            "N",
+            "Network Intelligence",
+            lambda progress=None: collect_network_intelligence(network_scan_config, progress=progress),
+        )
+        if network_scan_config and network_scan_config.enabled
+        else None
+    )
+
+    if only_network and network_intelligence_collector is not None:
+        collectors.append(network_intelligence_collector)
+
+    collectors.append(
+        Collector("network_resources", "t", "Network and Local Resources", _collector_without_progress(collect_network_resources))
+    )
 
     if not only_network:
         collectors.extend(
@@ -983,13 +999,6 @@ def get_collectors(
             ]
         )
 
-    if network_scan_config and network_scan_config.enabled:
-        collectors.append(
-            Collector(
-                "network_intelligence",
-                "N",
-                "Network Intelligence",
-                lambda progress=None: collect_network_intelligence_data(network_scan_config, progress=progress),
-            )
-        )
+    if not only_network and network_intelligence_collector is not None:
+        collectors.append(network_intelligence_collector)
     return collectors

@@ -45,8 +45,8 @@ class UserGuidePdfTests(unittest.TestCase):
         source = (root / "scripts" / "build_user_guide_pdf.py").read_text(
             encoding="utf-8"
         )
-        vulnerability_page = source.split("# Page 6 - vulnerability sources", 1)[1].split(
-            "# Page 7 - batch HTML and cancellation", 1
+        vulnerability_page = source.split("# Page 7 - vulnerability sources", 1)[1].split(
+            "# Page 8 - batch HTML and cancellation", 1
         )[0]
 
         expected = (
@@ -68,6 +68,51 @@ class UserGuidePdfTests(unittest.TestCase):
             self.assertIn(text, vulnerability_page)
         self.assertNotIn("DeltaV", vulnerability_page)
         self.assertNotIn("12.03.0001", vulnerability_page)
+
+    def test_network_page_documents_local_profile_and_process_cleanup(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "build_user_guide_pdf.py").read_text(
+            encoding="utf-8"
+        )
+        network_page = source.split("# Page 6 - network audit", 1)[1].split(
+            "# Page 7 - vulnerability sources", 1
+        )[0]
+
+        expected = (
+            "127.0.0.1",
+            "22, 80, 135, 139, 443, 445, 3389, 5985, 5986, 8080, 8443",
+            "Режим T3",
+            "тайм-аут 120 секунд",
+            "Загрузить интерфейсы",
+            "Зелёная маркировка",
+            "tshark",
+            "hex-байты",
+            "Nmap, tshark и dumpcap",
+            "--network-scan --offline --no-open",
+        )
+        for text in expected:
+            self.assertIn(text, network_page)
+
+    def test_guide_links_to_network_edition_repository(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "build_user_guide_pdf.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("https://github.com/Amtonsi/ib-audit-workstation-network", source)
+
+    def test_build_page_documents_bundled_tools_and_current_spec_command(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "build_user_guide_pdf.py").read_text(
+            encoding="utf-8"
+        )
+        build_page = source.split("# Page 10 - commands and build", 1)[1]
+
+        self.assertIn("tools\\\\nmap", build_page)
+        self.assertIn("tools\\\\wireshark", build_page)
+        self.assertIn("tools\\\\npcap", build_page)
+        self.assertNotIn("IBuditWorkstation.spec", build_page)
+        self.assertNotIn("--onefile", build_page)
 
 
 if __name__ == "__main__":

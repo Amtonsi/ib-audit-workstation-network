@@ -297,6 +297,7 @@ class BatchHtmlReportBuilder:
             self._inventory_category(item, category, categories[category], risks_by_object)
             for category in ordered
         )
+        network_packet_html = self._network_packet_list(item)
         diagnostics = "".join(
             "<tr>"
             f"<td>{html.escape(diag.module)}</td>"
@@ -327,6 +328,7 @@ class BatchHtmlReportBuilder:
             f"{self._kpi(str(coverage.insufficient_data), 'недостаточно данных', 'warning')}"
             f"{self._kpi(str(coverage.document_percent) + '%', 'покрытие')}"
             "</div>"
+            f"{network_packet_html}"
             f"<h3 id='{anchor}-risks'>Риски и рекомендации</h3>"
             f"<div class='host-findings'>{findings_html}</div>"
             f"<h3 id='{anchor}-inventory'>Полный инвентарь</h3>"
@@ -335,6 +337,29 @@ class BatchHtmlReportBuilder:
             "<table><thead><tr><th>Модуль</th><th>Уровень</th>"
             f"<th>Сообщение</th><th>Источник</th></tr></thead><tbody>{diagnostics}</tbody></table>"
             "</div></details></section>"
+        )
+
+    def _network_packet_list(self, item: BatchDocumentResult) -> str:
+        flows = [obj for obj in item.inventory if obj.object_type == "network_capture"]
+        if not flows:
+            return ""
+        services = [obj for obj in item.inventory if obj.object_type == "network_service"]
+        adapters = [obj for obj in item.inventory if obj.object_type == "network_adapter"]
+        builder = HtmlReportBuilder()
+        packet_rows = builder._packet_rows_from_flows(flows)
+        topology = builder._build_network_topology(services, flows, adapters)
+        severity_counts: defaultdict[str, int] = defaultdict(int)
+        for flow in flows:
+            severity_counts[builder._traffic_severity_class(flow.fields.get("Traffic Severity"))] += 1
+        dashboard = topology.get("dashboard", {}) if isinstance(topology, dict) else {}
+        protocols = dashboard.get("protocols", []) if isinstance(dashboard, dict) else []
+        packet_html = "".join(builder._packet_list_html(packet_rows)) if packet_rows else ""
+        return (
+            "<div class='network-packet-report'>"
+            + builder._network_overview_html(services, flows, packet_rows, topology, severity_counts, protocols)
+            + builder._network_topology_panel_html(topology)
+            + packet_html
+            + "</div>"
         )
 
     def _inventory_category(
@@ -575,6 +600,7 @@ table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{padding:9px;b
 .document-section{padding:0;overflow:hidden}.document-section>details>summary{display:flex;justify-content:space-between;gap:15px;align-items:center;cursor:pointer;padding:17px 20px;background:#f8fafb}.document-section>details>summary::marker{color:var(--teal)}.document-section summary strong{font-size:18px}.document-section summary small{display:block;color:var(--muted);margin-top:3px}.summary-risk{color:var(--red);font-weight:700}.document-body{padding:4px 20px 20px}.document-tools{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.document-tools a{border:1px solid var(--line);border-radius:999px;padding:7px 10px;text-decoration:none;color:var(--teal);font-size:13px;font-weight:700}.document-tools a:hover{border-color:var(--teal);background:#ecfdf5}
 .host-findings{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:8px}.host-finding{border:1px solid var(--line);border-left:5px solid #64748b;border-radius:8px;padding:12px;min-width:0}.host-finding .severity{float:right}.category{border:1px solid var(--line);border-radius:8px;margin:8px 0}.category>summary{cursor:pointer;font-weight:700;padding:11px 13px;background:#f8fafb}.category>summary span{float:right;background:#e2e8f0;border-radius:999px;padding:2px 7px;font-size:11px}
 .object-card{margin:10px;border:1px solid #e5eaed;border-radius:8px;padding:12px}.object-risk-links{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:9px;border-top:1px solid #e5eaed;padding-top:9px;min-width:0}.object-risk-links>strong{color:var(--red);font-size:12px;margin-right:2px}.object-risk-link{display:inline-block;max-width:100%;border-radius:999px;padding:3px 8px;background:#e2e8f0;color:#475569;font-size:12px;font-weight:700;text-decoration:none;overflow-wrap:anywhere}.object-risk-link.critical{background:#fee2e2;color:#991b1b}.object-risk-link.high{background:#ffedd5;color:#9a3412}.object-risk-link.medium{background:#dbeafe;color:#1d4ed8}.object-risk-link:hover{outline:2px solid currentColor;outline-offset:1px}.host-finding.risk-target{outline:3px solid var(--teal);outline-offset:3px;background:#ecfdf5}.item-value td:first-child{width:260px;font-weight:600}.empty{color:var(--muted);padding:8px 0}footer{color:var(--muted);font-size:12px;padding:5px 2px 24px}
+.network-packet-report{margin:16px 0;padding:12px;border:1px solid var(--line);border-radius:10px;background:#f8fafb}.network-overview{border:1px solid #dbeafe;border-left:5px solid #2563eb;background:#eff6ff;border-radius:10px;padding:12px;margin:12px 0}.network-overview h3{margin-top:0}.protocol-summary{display:flex;align-items:center;flex-wrap:wrap;gap:6px}.protocol-count{font-size:12px;color:#475569;margin-right:6px}.protocol-badge{display:inline-block;border-radius:999px;padding:3px 8px;font-size:12px;font-weight:900;letter-spacing:.02em;color:#fff;background:#64748b}.protocol-http{background:#ef4444}.protocol-tls{background:#2563eb}.protocol-dns{background:#8b5cf6}.protocol-quic{background:#06b6d4}.protocol-tcp{background:#16a34a}.protocol-udp{background:#f59e0b}.protocol-arp{background:#64748b}.protocol-other{background:#475569}.traffic-badge{display:inline-block;border-radius:999px;padding:3px 8px;font-size:12px;font-weight:800;background:#e2e8f0;color:#334155}.traffic-badge.info{background:#e2e8f0;color:#334155}.traffic-badge.low{background:#dcfce7;color:#166534}.traffic-badge.medium{background:#fef3c7;color:#92400e}.traffic-badge.high{background:#fee2e2;color:#991b1b}.traffic-badge.critical{background:#7f1d1d;color:#fff}.network-map-panel{border:1px solid #c7d2fe;border-radius:18px;overflow:hidden;background:#ffffff;margin:16px 0;box-shadow:0 18px 42px rgba(37,99,235,.13)}.network-map-panel h3{margin:0;padding:13px 16px;background:linear-gradient(90deg,#eff6ff,#dbeafe 52%,#ccfbf1);color:#0f172a;font-size:15px;letter-spacing:.03em}.network-map-svg{display:block;width:100%;height:auto;background:#eff6ff}.network-map-bg{fill:url(#networkMapBg)}.network-map-grid{stroke:rgba(71,85,105,.16);stroke-width:1}.network-map-edge{stroke:#64748b;stroke-width:1.7;stroke-dasharray:6 7;opacity:.58;filter:url(#linkGlow)}.network-map-edge.high,.network-map-edge.critical{stroke:#dc2626;stroke-width:2.5;opacity:.9}.network-map-edge.protocol-http{stroke:#ef4444}.network-map-edge.protocol-tls{stroke:#2563eb}.network-map-edge.protocol-dns{stroke:#7c3aed}.network-map-edge.protocol-quic{stroke:#0891b2}.network-map-node ellipse{stroke:rgba(255,255,255,.96);stroke-width:1.6;fill:url(#nodeEndpoint);filter:url(#nodeGlow)}.network-map-node text{font-family:Segoe UI,Arial,sans-serif;text-anchor:middle;dominant-baseline:middle;paint-order:stroke;stroke:rgba(15,23,42,.32);stroke-width:2.2px}.network-map-label{font-size:13px;font-weight:900;fill:#ffffff}.network-map-role{font-size:9px;font-weight:800;fill:#ecfeff;letter-spacing:.06em;text-transform:uppercase}.network-map-node.central ellipse{fill:url(#nodeCentral);stroke:#1d4ed8;stroke-width:3.2}.network-map-node.central .network-map-label{font-size:15px}.network-map-node.external ellipse{fill:url(#nodeExternal);stroke:#dc2626}.network-map-node.gateway ellipse{fill:url(#nodeCentral);stroke:#2563eb}.network-map-node.router ellipse,.network-map-node.switch ellipse{fill:url(#nodeAmber);stroke:#d97706}.network-map-node.server ellipse{fill:linear-gradient(90deg,#14b8a6,#0f766e);stroke:#0f766e}.network-node-table{margin:10px;width:calc(100% - 20px);border-radius:10px;overflow:hidden;background:#fff}.packet-list-collapsed{border:1px solid #cbd5e1;border-radius:10px;margin:14px 0;background:#fff}.packet-list-collapsed>summary{cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;font-weight:800;background:#f8fafc}.packet-list-collapsed>p,.packet-list-collapsed>table,.packet-list-collapsed>.limit-note{margin-left:12px;margin-right:12px}.packet-list th{position:sticky;top:0;background:#e5e7eb;z-index:1}.packet-list td{font-family:Consolas,monospace;font-size:12px}.packet-row.info td{background:#fff}.packet-row.low td{background:#ecfdf5}.packet-row.medium td{background:#fffbeb}.packet-row.high td{background:#fef2f2}.packet-row.critical td{background:#fee2e2}.packet-samples summary{cursor:pointer;color:#1d4ed8;font-weight:700}.packet-samples pre{white-space:pre-wrap;max-height:280px;overflow:auto;background:#0f172a;color:#dbeafe;border-radius:8px;padding:8px;font-size:12px}.packet-hex{color:#bfdbfe!important}
 @media(max-width:900px){aside{position:static;width:auto}.nav-title,aside a,.nav-empty{display:inline-block;margin:4px}.brand-subtitle{margin-bottom:8px}main{margin:0;padding:12px}.hero-head,.section-head{display:block}.batch-status{margin-top:8px}.search{min-width:0;width:100%;margin-top:10px}.comparison{font-size:12px}.item-value td:first-child{width:38%}}
 </style>"""
 

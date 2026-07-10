@@ -1,4 +1,5 @@
 import os
+import json
 import queue
 import sys
 import unittest
@@ -15,6 +16,7 @@ from ib_audit.gui_tk import (
 from ib_audit.batch import BatchProgress
 from ib_audit.cancellation import CancellationToken
 from ib_audit.models import SourceSnapshot
+from ib_audit.network_scan import NetworkScanConfig
 
 
 class FakeVar:
@@ -458,6 +460,225 @@ class AuditWindowReportImportTests(unittest.TestCase):
         self.assertFalse(config.nmap_os_detection)
         self.assertFalse(config.nmap_open_only)
         thread_factory.return_value.start.assert_called_once()
+
+    @patch("ib_audit.gui_tk.threading.Thread")
+    def test_start_capture_uses_safe_traffic_telemetry_without_npcap_prompt(self, thread_factory):
+        window = self._window()
+        window.root = Mock()
+        window._ensure_network_state()
+        window.network_scan_enabled.set(True)
+        window.network_capture_enabled.set(True)
+        window.network_capture_interface.set("3")
+
+        status = type(
+            "NpcapStatusStub",
+            (),
+            {"installed": False, "install_required": True, "message": "Npcap is not installed"},
+        )()
+        with patch("ib_audit.gui_tk.query_npcap_status", return_value=status), \
+                patch("ib_audit.gui_tk.messagebox.askyesno") as ask, \
+                patch.object(window, "_start_network_scan_live_window"):
+            window._start(True)
+
+        ask.assert_not_called()
+        thread_factory.assert_called_once()
+
+    def test_capture_only_network_config_disables_nmap_phase(self):
+        window = self._window()
+        window._ensure_network_state()
+        window.network_scan_enabled.set(False)
+        window.network_capture_enabled.set(True)
+        window.network_capture_interface.set("5")
+
+        config = window._selected_network_scan_config()
+
+        self.assertIsNotNone(config)
+        self.assertTrue(config.enabled)
+        self.assertTrue(config.capture_enabled)
+        self.assertFalse(config.nmap_enabled)
+
+    @patch("ib_audit.gui_tk.threading.Thread")
+    def test_start_capture_requires_selected_interface(self, thread_factory):
+        window = self._window()
+        window.root = Mock()
+        window._ensure_network_state()
+        window.network_scan_enabled.set(True)
+        window.network_capture_enabled.set(True)
+
+        with patch("ib_audit.gui_tk.messagebox.showwarning") as showwarning:
+            window._start(True)
+
+        thread_factory.assert_not_called()
+        showwarning.assert_called_once()
+        warning_text = "\n".join(str(part) for part in showwarning.call_args.args)
+        self.assertIn("Загрузить интерфейсы", warning_text)
+        self.assertNotIn("???", warning_text)
+
+    def test_network_ui_texts_do_not_use_question_mark_placeholders(self):
+        source = Path("src/ib_audit/gui_tk.py").read_text(encoding="utf-8")
+
+        self.assertNotRegex(source, r"\?{3,}")
+
+    def test_live_monitor_classifies_packet_nmap_and_security_events(self):
+        window = AuditWindow.__new__(AuditWindow)
+        window._network_live_events = [
+            "Running nmap: nmap -sT -p 80 192.168.1.10",
+            "TRAFFIC_RISK|high|192.168.1.10:51516 -> 93.184.216.34:80 HTTP GET /login",
+        ]
+
+        row = window._network_live_packet_row(window._network_live_events[1])
+
+        self.assertIsNotNone(row)
+        self.assertEqual("HIGH", row[0])
+        self.assertEqual("HTTP", row[1])
+        self.assertEqual("192.168.1.10:51516", row[2])
+        self.assertEqual("93.184.216.34:80", row[3])
+        self.assertTrue(window._network_live_event_is_nmap(window._network_live_events[0]))
+        self.assertTrue(window._network_live_event_is_security(window._network_live_events[1]))
+
+    def test_live_monitor_builds_wireshark_packet_row_from_packet_json_event(self):
+        window = AuditWindow.__new__(AuditWindow)
+        packet = {
+            "No.": "7",
+            "Time": "10.125",
+            "Source": "192.168.1.10:51516",
+            "Destination": "93.184.216.34:80",
+            "Protocol": "HTTP",
+            "Length": "140",
+            "Info": "GET /login HTTP/1.1",
+            "Details": "Frame 7: 140 bytes\nProtocol stack: eth:ip:tcp:http",
+            "Bytes Hex": "00 01 02 0a 0b 0c",
+        }
+
+        row = window._network_live_wireshark_packet_row("PACKET_ROW|medium|" + json.dumps(packet))
+
+        self.assertIsNotNone(row)
+        self.assertEqual(("7", "10.125", "192.168.1.10:51516", "93.184.216.34:80", "HTTP", "140"), row[:6])
+        self.assertIn("GET /login", row[6])
+        self.assertEqual("MEDIUM", row[7])
+        self.assertIn("Protocol stack", row[8])
+        self.assertIn("00 01 02", row[9])
+
+    def test_live_monitor_status_tracks_latest_scan_event(self):
+        window = AuditWindow.__new__(AuditWindow)
+        window._network_live_window = object()
+        window._network_live_text = None
+        window._network_live_canvas = None
+        window._network_live_packet_table = None
+        window._network_live_nodes_table = None
+        window._network_live_nmap_text = None
+        window._network_live_security_text = None
+        window._network_live_log_text = None
+        window._network_live_summary_vars = {}
+        window._network_live_status = FakeVar("old")
+        window._network_live_events = []
+        window._network_topology_nodes = set()
+
+        window._append_network_scan_event("Running collector: network_intelligence")
+
+        self.assertIn("network_intelligence", window._network_live_status.get())
+
+    def test_live_monitor_classifies_network_intelligence_collector_as_nmap_event(self):
+        window = AuditWindow.__new__(AuditWindow)
+
+        self.assertTrue(window._network_live_event_is_nmap("Running collector: network_intelligence"))
+
+    def test_live_monitor_builds_packet_row_from_safe_telemetry_message(self):
+        window = AuditWindow.__new__(AuditWindow)
+
+        row = window._network_live_packet_row("Safe traffic telemetry completed: 12 active TCP connection row(s)")
+
+        self.assertIsNotNone(row)
+        self.assertEqual("TCP", row[1])
+        self.assertIn("Safe traffic telemetry", row[4])
+
+    def test_live_monitor_visualizes_capture_active_event(self):
+        window = AuditWindow.__new__(AuditWindow)
+        event = "CAPTURE_ACTIVE|info|Захват трафика выполняется: интерфейсы=5; режим=safe Windows telemetry"
+
+        row = window._network_live_packet_row(event)
+        status = window._network_live_status_for_event(event)
+        display, tag = window._network_live_event_display(event)
+
+        self.assertIsNotNone(row)
+        self.assertEqual("CAPTURE", row[1])
+        self.assertIn("Захват трафика выполняется", row[4])
+        self.assertEqual("Захват трафика выполняется", status)
+        self.assertIn("CAPTURE", display)
+        self.assertEqual("packet", tag)
+
+    def test_live_monitor_capture_banner_text_is_unambiguous(self):
+        window = AuditWindow.__new__(AuditWindow)
+        config = NetworkScanConfig(
+            enabled=True,
+            nmap_enabled=True,
+            capture_enabled=True,
+            capture_interfaces=("5", "Wi-Fi"),
+            capture_duration=20,
+        )
+
+        text = window._network_live_capture_banner_text(config)
+
+        self.assertIn("ЗАХВАТ ТРАФИКА ИДЁТ", text)
+        self.assertIn("5, Wi-Fi", text)
+        self.assertIn("Nmap после первичного захвата", text)
+
+    def test_network_interface_tone_marks_interfaces_with_traffic(self):
+        window = AuditWindow.__new__(AuditWindow)
+
+        tone = window._network_capture_interface_tone({"active": "yes", "kind": "physical", "traffic_active": "yes"})
+
+        self.assertEqual("Traffic", tone)
+        self.assertEqual("ДАННЫЕ", window._network_capture_interface_badge({"traffic_active": "yes"}))
+
+    def test_network_interface_panel_defaults_unselected_and_marks_active_status(self):
+        root = FakeWidget(kind="Root")
+        window = self._window()
+        window.root = root
+        window._network_capture_interface_frame = FakeWidget(kind="Frame")
+        window._network_capture_interface_list_frame = FakeWidget(parent=window._network_capture_interface_frame, kind="Frame")
+        window.network_capture_interfaces = [
+            {
+                "index": "5",
+                "name": "5",
+                "description": "\\Device\\NPF_{WIFI} (Беспроводная сеть)",
+                "friendly_name": "Беспроводная сеть",
+                "status": "Up",
+                "active": "yes",
+                "kind": "physical",
+                "link_speed": "866 Mbps",
+            },
+            {
+                "index": "14",
+                "name": "14",
+                "description": "ciscodump (Cisco remote capture)",
+                "friendly_name": "Cisco remote capture",
+                "status": "service",
+                "active": "no",
+                "kind": "extcap",
+            },
+        ]
+
+        def widget_factory(kind):
+            return lambda parent=None, **options: FakeWidget(parent=parent, kind=kind, **options)
+
+        with patch("ib_audit.gui_tk.BooleanVar", FakeVar), \
+                patch("ib_audit.gui_tk.ttk.Frame", widget_factory("Frame")), \
+                patch("ib_audit.gui_tk.ttk.Label", widget_factory("Label")), \
+                patch("ib_audit.gui_tk.ttk.Checkbutton", widget_factory("Checkbutton")):
+            window._build_network_capture_interface_checkbox_panel()
+
+        self.assertFalse(any(variable.get() for variable in window._capture_interface_checkbox_vars.values()))
+        labels = [
+            child.options.get("text", "")
+            for row in window._network_capture_interface_list_frame.children
+            for group in row.children
+            for child in getattr(group, "children", [])
+            if child.kind == "Checkbutton"
+        ]
+        label_text = " ".join(labels)
+        self.assertIn("Активен", label_text)
+        self.assertIn("Служебный", label_text)
 
     def test_network_command_window_controls_are_present(self):
         root = FakeWidget(kind="Root")

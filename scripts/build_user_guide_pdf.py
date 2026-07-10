@@ -5,7 +5,7 @@ from datetime import date
 from pathlib import Path
 
 
-GITHUB_REPO = "https://github.com/Amtonsi/ib-audit-workstation"
+GITHUB_REPO = "https://github.com/Amtonsi/ib-audit-workstation-network"
 GITHUB_README = f"{GITHUB_REPO}#readme"
 GITHUB_RELEASES = f"{GITHUB_REPO}/releases"
 GITHUB_ISSUES = f"{GITHUB_REPO}/issues"
@@ -378,7 +378,7 @@ def build_pdf(output_path: str | Path) -> Path:
     y -= 26
     c.drawString(205, y, f"Дата инструкции: {date.today().strftime('%d.%m.%Y')}")
     y -= 34
-    draw_link("GitHub: Amtonsi/ib-audit-workstation", GITHUB_REPO, 205, y, size=12)
+    draw_link("GitHub: Amtonsi/ib-audit-workstation-network", GITHUB_REPO, 205, y, size=12)
     draw_cover_window(548, 112, 252, 308)
     c.showPage()
 
@@ -415,7 +415,7 @@ def build_pdf(output_path: str | Path) -> Path:
     step_gap = 42
     label_box(
         "1. Клонировать",
-        "git clone https://github.com/Amtonsi/ib-audit-workstation.git",
+        "git clone https://github.com/Amtonsi/\nib-audit-workstation-network.git",
         x,
         y - 72,
         step_w,
@@ -654,8 +654,97 @@ def build_pdf(output_path: str | Path) -> Path:
     )
     c.showPage()
 
-    # Page 6 - vulnerability sources
-    section_header("4. Источники уязвимостей и режимы", 6)
+    # Page 6 - network audit
+    section_header("4. Сетевой аудит: Nmap и анализ трафика", 6)
+    x = margin
+    y = page_height - 104
+    label_box(
+        "Только текущий ноутбук",
+        "Если цели не заполнены, Nmap проверяет 127.0.0.1 и IPv4-адреса локальных адаптеров. "
+        "Подсети и удалённые узлы не добавляются автоматически.",
+        x,
+        y - 88,
+        242,
+        88,
+        fill=light_green,
+        title_color=green,
+    )
+    label_box(
+        "Быстрый профиль Nmap",
+        "Порты: 22, 80, 135, 139, 443, 445, 3389, 5985, 5986, 8080, 8443. "
+        "Режим T3, тайм-аут 120 секунд, определение ОС выключено по умолчанию.",
+        x + 270,
+        y - 88,
+        242,
+        88,
+        fill=light_blue,
+        title_color=blue,
+    )
+    label_box(
+        "Правовая граница",
+        "Сканируйте только собственные устройства и сети, для которых получено явное разрешение. "
+        "Удалённая цель вводится пользователем вручную.",
+        x + 540,
+        y - 88,
+        242,
+        88,
+        fill=light_amber,
+        title_color=amber,
+    )
+
+    y -= 122
+    set_font(15, bold=True)
+    c.drawString(x, y, "Интерфейсы и захват")
+    y -= 26
+    bullet_list(
+        [
+            "Нажмите «Загрузить интерфейсы»: каждый адаптер отображается отдельной строкой с чекбоксом.",
+            "Зелёная маркировка означает наличие RX/TX-трафика; неактивные и виртуальные интерфейсы выделяются отдельно.",
+            "Для захвата выберите один или несколько конкретных интерфейсов. Автозахват по всем адаптерам отключён.",
+            "При доступном tshark монитор показывает пакеты, протокол, источник, назначение, длину, описание, детали и hex-байты.",
+            "Если драйверный захват недоступен, приложение использует безопасную Windows-телеметрию соединений и счётчиков.",
+        ],
+        x,
+        y,
+        390,
+    )
+
+    monitor_x = x + 420
+    card(monitor_x, page_height - 390, 360, 164, fill=colors.white)
+    set_font(13, bold=True, color=teal)
+    c.drawString(monitor_x + 16, page_height - 250, "Сетевой монитор")
+    draw_wrapped(
+        "В одном окне объединены таблица пакетов Wireshark-подобного вида, вывод Nmap, "
+        "схема узлов, ИБ-анализ и журнал выполнения. Итоговые сетевые данные сохраняются "
+        "в HTML-отчёте; пакеты свёрнуты и раскрываются по запросу.",
+        monitor_x + 16,
+        page_height - 274,
+        328,
+        size=10,
+        leading=13.5,
+    )
+    pill("Пакеты", monitor_x + 16, page_height - 365, light_blue, color=blue)
+    pill("Nmap", monitor_x + 94, page_height - 365, light_teal, color=teal)
+    pill("ИБ-события", monitor_x + 162, page_height - 365, light_amber, color=amber)
+
+    y = 126
+    card(x, y, page_width - margin * 2, 82, fill=light_red)
+    set_font(13, bold=True, color=red)
+    c.drawString(x + 16, y + 56, "Завершение и устойчивость")
+    draw_wrapped(
+        "При закрытии программы завершаются только запущенные ею процессы Nmap, tshark и dumpcap, "
+        "включая дочернее дерево. Для проверки только ноутбука из CLI используйте: "
+        "python run_audit.py --network-scan --offline --no-open",
+        x + 16,
+        y + 36,
+        page_width - margin * 2 - 32,
+        size=10,
+        leading=13,
+    )
+    c.showPage()
+
+    # Page 7 - vulnerability sources
+    section_header("5. Источники уязвимостей и режимы", 7)
     x = margin
     y = page_height - 108
     set_font(15, bold=True)
@@ -741,8 +830,8 @@ def build_pdf(output_path: str | Path) -> Path:
         draw_link(url, url, link_x + 118, link_y, size=9.2)
     c.showPage()
 
-    # Page 7 - batch HTML and cancellation
-    section_header("5. Проверка нескольких HTML-документов", 7)
+    # Page 8 - batch HTML and cancellation
+    section_header("6. Проверка нескольких HTML-документов", 8)
     x = margin + 18
     y = page_height - 124
     for idx, name in enumerate(["host-a.html", "host-b.html", "host-c.html"]):
@@ -790,8 +879,8 @@ def build_pdf(output_path: str | Path) -> Path:
     )
     c.showPage()
 
-    # Page 8 - report, privacy
-    section_header("6. Отчёт, приватность и публикация", 8)
+    # Page 9 - report, privacy
+    section_header("7. Отчёт, приватность и публикация", 9)
     x = margin
     y = page_height - 104
     set_font(16, bold=True)
@@ -829,8 +918,8 @@ def build_pdf(output_path: str | Path) -> Path:
     draw_link("GitHub Actions для проверки тестов", GITHUB_ACTIONS, x, y, size=11)
     c.showPage()
 
-    # Page 9 - commands and build
-    section_header("7. Команды сборки и проверки", 9)
+    # Page 10 - commands and build
+    section_header("8. Команды сборки и проверки", 10)
     x = margin
     y = page_height - 104
     set_font(16, bold=True)
@@ -841,7 +930,7 @@ def build_pdf(output_path: str | Path) -> Path:
         ("CLI-аудит", "python run_audit.py --no-open"),
         ("Offline-аудит", "python run_audit.py --offline --no-open"),
         ("Обновление БД", "python scripts/update_vulnerability_database.py --output outputs\\vulnerability-database\nпереиспользует CPE Dictionary; большой CPE Match включается флагом --with-cpe-match"),
-        ("Сборка EXE", "python -m PyInstaller build\\pyinstaller\\IBAuditWorkstation.spec --onefile --noconfirm --clean --distpath outputs\\dist --workpath build\\pyinstaller\\work-batch-html"),
+        ("Сборка EXE", "python -m PyInstaller build\\pyinstaller\\IBAuditWorkstation.spec --noconfirm --clean --distpath outputs\\dist --workpath build\\pyinstaller\\work"),
         ("Сборка PDF", "python scripts\\build_user_guide_pdf.py --output docs\\IBAuditWorkstation_UserGuide_RU.pdf"),
         ("Тесты", "python -m unittest discover -s tests"),
     ]
@@ -864,7 +953,8 @@ def build_pdf(output_path: str | Path) -> Path:
     set_font(13, bold=True, color=amber)
     c.drawString(x + 16, y - 24, "Важно про PyInstaller")
     draw_wrapped(
-        "Используйте готовый build\\pyinstaller\\IBAuditWorkstation.spec. Он добавляет rulepacks JSON в сборку. "
+        "Используйте готовый build\\pyinstaller\\IBAuditWorkstation.spec. Он добавляет rulepacks JSON и локальные "
+        "tools\\nmap, tools\\wireshark, tools\\npcap. Каталог tools не публикуется в Git. "
         "Если регенерировать spec через --name и --specpath, приложение может не найти windows_base.json.",
         x + 16,
         y - 44,

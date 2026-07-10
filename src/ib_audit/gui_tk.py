@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-import html
+import os
+import json
 import queue
 import re
 import sys
 import threading
 import webbrowser
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from tkinter import BOTH, END, LEFT, RIGHT, X, Y, BooleanVar, StringVar, Tk, Toplevel, filedialog, messagebox, scrolledtext, ttk
+from tkinter import BOTH, END, LEFT, RIGHT, X, Y, BooleanVar, Canvas, StringVar, Tk, Toplevel, filedialog, messagebox, scrolledtext, ttk
 
 from .app import (
     VULNERABILITY_MODE_FAST,
@@ -21,7 +23,14 @@ from .app import (
 from .batch import BatchProgress
 from .cancellation import AuditCancelled, CancellationToken
 from .models import SourceSnapshot
-from .network_scan import NETWORK_COMMAND_OPTIONS, NetworkScanConfig, detect_tshark_interfaces
+from .network_scan import (
+    DEFAULT_LOCAL_NMAP_PORTS,
+    NETWORK_COMMAND_OPTIONS,
+    NetworkScanConfig,
+    detect_tshark_interfaces,
+    local_machine_nmap_targets,
+)
+from .npcap import NPCAP_DOWNLOAD_URL, launch_npcap_installer, query_npcap_status, resolve_npcap_installer
 
 
 SOURCE_LABELS = ("CISA KEV", "NVD", "ФСТЭК БДУ")
@@ -49,6 +58,20 @@ COLORS = {
 }
 
 DEVELOPER_CREDIT = "Разработал: Абдрахманов Амаль Даулетович"
+
+
+def _frozen_startup_log(message: str) -> None:
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        base_dir = Path(os.environ.get("LOCALAPPDATA") or Path.home())
+        log_dir = base_dir / "IBAuditWorkstation" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        with (log_dir / "startup.log").open("a", encoding="utf-8") as handle:
+            handle.write(f"{timestamp} {message}\n")
+    except OSError:
+        return
 
 
 @dataclass(frozen=True)
@@ -396,12 +419,20 @@ def progress_value_for_message(message: str, current: int) -> int:
 
 class AuditWindow:
     def __init__(self) -> None:
+        _frozen_startup_log("AuditWindow.__init__ begin")
         _enable_high_dpi_awareness()
+        _frozen_startup_log("dpi awareness ready")
         self.root = Tk()
+        _frozen_startup_log("tk root created")
         self.root.title("IB Audit Workstation")
         self.window_bounds = window_bounds_for_screen(
             self.root.winfo_screenwidth(),
             self.root.winfo_screenheight(),
+        )
+        _frozen_startup_log(
+            "screen bounds "
+            f"width={self.window_bounds.width} "
+            f"height={self.window_bounds.height}"
         )
         self.root.geometry(f"{self.window_bounds.width}x{self.window_bounds.height}")
         self.root.minsize(self.window_bounds.min_width, self.window_bounds.min_height)
@@ -415,33 +446,54 @@ class AuditWindow:
         self.network_scan_enabled = BooleanVar(value=False)
         self.network_capture_enabled = BooleanVar(value=False)
         self.network_targets = StringVar(value="")
-        self.network_ports = StringVar(value="1-65535")
+        self.network_ports = StringVar(value=DEFAULT_LOCAL_NMAP_PORTS)
         self.network_extra_args = StringVar(value="")
         self.network_capture_interface = StringVar(value="")
         self.network_capture_excluded_interfaces = StringVar(value="")
         self.network_capture_duration = StringVar(value="20")
         self.network_capture_filter = StringVar(value="")
+        self.network_capture_interfaces: list[dict[str, str]] = []
+        self._capture_interface_checkbox_vars: dict[str, BooleanVar] = {}
+        self._network_capture_interface_frame = None
+        self._network_capture_interface_list_frame = None
+        self.network_capture_interface_summary = StringVar(value="Интерфейсы не выбраны")
+        self._network_topology_nodes: set[str] = set()
         self.network_nmap_no_dns = BooleanVar(value=True)
         self.network_nmap_skip_host_discovery = BooleanVar(value=True)
-        self.network_nmap_timing = StringVar(value="T2")
+        self.network_nmap_timing = StringVar(value="T3")
         self.network_nmap_open_only = BooleanVar(value=True)
-        self.network_nmap_os_detection = BooleanVar(value=True)
+        self.network_nmap_os_detection = BooleanVar(value=False)
         self.network_nmap_service_detection = BooleanVar(value=True)
         self.network_capture_no_name_resolution = BooleanVar(value=True)
         self.network_capture_quiet = BooleanVar(value=True)
         self.last_report: str | None = None
-        self._network_live_dashboard_path: Path | None = None
         self._network_live_events: list[str] = []
-        self._network_report_path_for_dashboard: str | None = None
+        self._network_live_window: Toplevel | None = None
+        self._network_live_text: scrolledtext.ScrolledText | None = None
+        self._network_live_canvas: Canvas | None = None
+        self._network_live_status = StringVar(value="Ожидание запуска")
+        self._network_live_report_button: ttk.Button | None = None
+        self._network_live_packet_table = None
+        self._network_live_packet_details_text = None
+        self._network_live_packet_hex_text = None
+        self._network_live_packet_detail_cache: dict[str, tuple[str, str]] = {}
+        self._network_live_nodes_table = None
+        self._network_live_nmap_text: scrolledtext.ScrolledText | None = None
+        self._network_live_security_text: scrolledtext.ScrolledText | None = None
+        self._network_live_log_text: scrolledtext.ScrolledText | None = None
+        self._network_live_summary_vars: dict[str, StringVar] = {}
         self.messages: queue.Queue[object] = queue.Queue()
         self.action_buttons: list[ttk.Button] = []
         self.active_cancel_token: CancellationToken | None = None
         self._last_responsive_layout: ResponsiveLayout | None = None
         self._applying_responsive_layout = False
         self._configure_styles()
+        _frozen_startup_log("styles configured")
         self._build()
-        self.root.after(250, self._auto_detect_network_capture_interface)
+        _frozen_startup_log("widgets built")
+        self.root.after(250, self._load_network_capture_interfaces)
         self.root.after(200, self._drain_messages)
+        _frozen_startup_log("after callbacks scheduled")
 
     def _configure_styles(self) -> None:
         self.style = ttk.Style(self.root)
@@ -557,6 +609,27 @@ class AuditWindow:
             foreground=COLORS["text"],
             font=("Segoe UI", 9),
         )
+        interface_styles = {
+            "Traffic": ("#E8F8EF", "#065F46"),
+            "Active": ("#FFF7D6", "#92400E"),
+            "Quiet": ("#EEF2F7", "#475569"),
+            "Inactive": ("#F4F5F7", "#6B7280"),
+        }
+        for name, (background, foreground) in interface_styles.items():
+            self.style.configure(f"Interface{name}.TFrame", background=background)
+            self.style.configure(
+                f"Interface{name}.TCheckbutton",
+                background=background,
+                foreground=foreground,
+                font=("Segoe UI Semibold" if name == "Traffic" else "Segoe UI", 9),
+            )
+            self.style.configure(
+                f"Interface{name}.TLabel",
+                background=foreground,
+                foreground="#FFFFFF",
+                font=("Segoe UI Semibold", 8),
+                padding=(7, 3),
+            )
         badge_styles = {
             "Ready.TLabel": (COLORS["header"], "#D7E0E3"),
             "Busy.TLabel": (COLORS["blue"], "#FFFFFF"),
@@ -760,10 +833,27 @@ class AuditWindow:
         ttk.Entry(network_options_row, textvariable=self.network_ports, width=18).pack(side=LEFT, padx=(12, 14))
         ttk.Label(network_options_row, text="Nmap args", style="Muted.TLabel").pack(side=LEFT)
         ttk.Entry(network_options_row, textvariable=self.network_extra_args).pack(side=LEFT, fill=X, expand=True, padx=(12, 14))
-        ttk.Label(network_options_row, text="Интерфейс", style="Muted.TLabel").pack(side=LEFT)
-        ttk.Entry(network_options_row, textvariable=self.network_capture_interface, width=12).pack(side=LEFT, padx=(12, 14))
         ttk.Label(network_options_row, text="Сек", style="Muted.TLabel").pack(side=LEFT)
         ttk.Entry(network_options_row, textvariable=self.network_capture_duration, width=6).pack(side=LEFT, padx=(8, 0))
+        self._network_capture_interface_frame = ttk.Frame(network_panel, style="Panel.TFrame")
+        self._network_capture_interface_frame.pack(fill=X, pady=(8, 0))
+        interface_header = ttk.Frame(self._network_capture_interface_frame, style="Panel.TFrame")
+        interface_header.pack(fill=X)
+        ttk.Label(interface_header, text="Интерфейсы захвата", style="Muted.TLabel").pack(side=LEFT)
+        ttk.Button(
+            interface_header,
+            text="Загрузить интерфейсы",
+            command=self._load_network_capture_interfaces,
+            style="Quiet.TButton",
+            cursor="hand2",
+        ).pack(side=LEFT, padx=(12, 0))
+        ttk.Label(
+            interface_header,
+            textvariable=self.network_capture_interface_summary,
+            style="Muted.TLabel",
+        ).pack(side=RIGHT)
+        self._build_network_capture_interface_scroll_area()
+        self._build_network_capture_interface_checkbox_panel()
 
         output_panel = ttk.Frame(workspace, style="Panel.TFrame", padding=(16, 13))
         output_panel.pack(fill=X, pady=(0, 12))
@@ -859,6 +949,91 @@ class AuditWindow:
         ensure("network_nmap_service_detection", True, boolean=True)
         ensure("network_capture_no_name_resolution", True, boolean=True)
         ensure("network_capture_quiet", True, boolean=True)
+        if not hasattr(self, "network_capture_interfaces"):
+            self.network_capture_interfaces = []
+        if not hasattr(self, "_capture_interface_checkbox_vars"):
+            self._capture_interface_checkbox_vars = {}
+        if not hasattr(self, "_network_capture_interface_frame"):
+            self._network_capture_interface_frame = None
+        if not hasattr(self, "_network_capture_interface_list_frame"):
+            self._network_capture_interface_list_frame = None
+        if not hasattr(self, "_network_capture_interface_canvas"):
+            self._network_capture_interface_canvas = None
+        if not hasattr(self, "_network_capture_interface_scrollbar"):
+            self._network_capture_interface_scrollbar = None
+        if not hasattr(self, "network_capture_interface_summary"):
+            try:
+                self.network_capture_interface_summary = StringVar(value="Интерфейсы не выбраны")
+            except Exception:
+                self.network_capture_interface_summary = _FallbackVar("Интерфейсы не выбраны")
+        if not hasattr(self, "_network_topology_nodes"):
+            self._network_topology_nodes = set()
+        if not hasattr(self, "_network_live_events"):
+            self._network_live_events = []
+        if not hasattr(self, "_network_live_window"):
+            self._network_live_window = None
+        if not hasattr(self, "_network_live_text"):
+            self._network_live_text = None
+        if not hasattr(self, "_network_live_canvas"):
+            self._network_live_canvas = None
+        if not hasattr(self, "_network_live_status"):
+            try:
+                self._network_live_status = StringVar(value="Ожидание запуска")
+            except Exception:
+                self._network_live_status = _FallbackVar("Ожидание запуска")
+        if not hasattr(self, "_network_live_report_button"):
+            self._network_live_report_button = None
+        self._network_live_packet_table = None
+        self._network_live_packet_details_text = None
+        self._network_live_packet_hex_text = None
+        self._network_live_packet_detail_cache = {}
+        self._network_live_nodes_table = None
+        self._network_live_nmap_text = None
+        self._network_live_security_text = None
+        self._network_live_log_text = None
+        self._network_live_summary_vars = {}
+
+    def _build_network_capture_interface_scroll_area(self) -> None:
+        frame = self._network_capture_interface_frame
+        if frame is None:
+            return
+        container = ttk.Frame(frame, style="Panel.TFrame")
+        container.pack(fill=X, pady=(4, 0))
+        try:
+            canvas = Canvas(
+                container,
+                height=142,
+                bg=COLORS["panel"],
+                highlightthickness=1,
+                highlightbackground=COLORS["border"],
+                borderwidth=0,
+            )
+            scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+            list_frame = ttk.Frame(canvas, style="Panel.TFrame")
+            window_id = canvas.create_window((0, 0), window=list_frame, anchor="nw")
+            canvas.configure(yscrollcommand=scrollbar.set)
+            list_frame.bind("<Configure>", lambda _event: self._refresh_network_capture_scroll_region())
+            canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window_id, width=event.width))
+            canvas.pack(side=LEFT, fill=X, expand=True)
+            scrollbar.pack(side=RIGHT, fill=Y)
+            self._network_capture_interface_canvas = canvas
+            self._network_capture_interface_scrollbar = scrollbar
+            self._network_capture_interface_list_frame = list_frame
+        except Exception:
+            list_frame = ttk.Frame(container, style="Panel.TFrame")
+            list_frame.pack(fill=X)
+            self._network_capture_interface_canvas = None
+            self._network_capture_interface_scrollbar = None
+            self._network_capture_interface_list_frame = list_frame
+
+    def _refresh_network_capture_scroll_region(self) -> None:
+        canvas = getattr(self, "_network_capture_interface_canvas", None)
+        if canvas is None:
+            return
+        try:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        except Exception:
+            return
 
     def _network_option_var(self, config_field: str) -> object:
         self._ensure_network_state()
@@ -905,31 +1080,239 @@ class AuditWindow:
                 return True
         return False
 
-    def _auto_detect_network_capture_interface(self) -> None:
+    def _network_interface_id(self, candidate: dict[str, str]) -> str:
+        return (
+            (candidate.get("name") or "").strip()
+            or (candidate.get("index") or "").strip()
+            or (candidate.get("description") or "").strip()
+        )
+
+    def _network_capture_interface_tokens_from_ui(self) -> tuple[str, ...]:
         self._ensure_network_state()
-        if self.network_capture_interface.get().strip():
+        selected: list[str] = []
+        seen_tokens: set[str] = set()
+        for token, variable in self._capture_interface_checkbox_vars.items():
+            try:
+                enabled = bool(variable.get())
+            except Exception:
+                enabled = False
+            normalized = str(token or "").strip()
+            if not enabled or not normalized:
+                continue
+            key = normalized.lower()
+            if key in seen_tokens:
+                continue
+            seen_tokens.add(key)
+            selected.append(normalized)
+        fallback = self._network_string_value("network_capture_interface")
+        for raw in fallback.replace(";", ",").split(","):
+            token = raw.strip()
+            if not token:
+                continue
+            key = token.lower()
+            if key in seen_tokens:
+                continue
+            seen_tokens.add(key)
+            selected.append(token)
+        return tuple(selected)
+
+    def _network_capture_disabled_interfaces_from_ui(self) -> tuple[str, ...]:
+        self._ensure_network_state()
+        disabled: set[str] = {_token.lower() for _token in self._network_interface_tokens("network_capture_excluded_interfaces")}
+        for candidate in self.network_capture_interfaces:
+            token = self._network_interface_id(candidate).lower()
+            variable = self._capture_interface_checkbox_vars.get(token)
+            if variable is None:
+                continue
+            try:
+                is_enabled = bool(variable.get())
+            except Exception:
+                is_enabled = True
+            if not is_enabled:
+                disabled.add(token)
+        return tuple(disabled)
+
+    def _update_capture_interface_summary(self) -> None:
+        self._ensure_network_state()
+        selected = self._network_capture_interface_tokens_from_ui()
+        total = len(self.network_capture_interfaces)
+        if not total:
+            self.network_capture_interface_summary.set("Интерфейсы не загружены")
             return
+        if selected:
+            self.network_capture_interface_summary.set(f"Выбрано {len(selected)} из {total}")
+        else:
+            self.network_capture_interface_summary.set("Не выбрано (захват отключён)")
+
+    def _build_network_capture_interface_checkbox_panel(self) -> None:
+        self._ensure_network_state()
+        frame = self._network_capture_interface_list_frame or self._network_capture_interface_frame
+        if frame is None:
+            return
+        if hasattr(frame, "winfo_children"):
+            children = list(frame.winfo_children())
+        else:
+            children = list(getattr(frame, "children", []))
+        for child in children:
+            if hasattr(child, "destroy"):
+                child.destroy()
+        if hasattr(frame, "children"):
+            try:
+                frame.children.clear()
+            except Exception:
+                pass
+        if not self.network_capture_interfaces:
+            ttk.Label(
+                frame,
+                text="Интерфейсы не загружены. Нажмите «Загрузить интерфейсы».",
+                style="Muted.TLabel",
+            ).pack(anchor="w", padx=(2, 0), pady=(2, 0))
+            self.network_capture_interface_summary.set("Интерфейсы не загружены")
+            self._refresh_network_capture_scroll_region()
+            return
+        check_group = ttk.Frame(frame, style="Panel.TFrame")
+        check_group.pack(fill=X)
+        selected_tokens = {token.lower() for token in self._network_interface_tokens("network_capture_interface")}
+        disabled = {_token.lower() for _token in self._network_interface_tokens("network_capture_excluded_interfaces")}
+        new_vars: dict[str, BooleanVar] = {}
+        for candidate in self.network_capture_interfaces:
+            token = self._network_interface_id(candidate)
+            if not token:
+                continue
+            key = token.lower()
+            variable = self._capture_interface_checkbox_vars.get(key)
+            if variable is None:
+                variable = BooleanVar(value=key in selected_tokens)
+            tone = self._network_capture_interface_tone(candidate)
+            row = ttk.Frame(check_group, style=f"Interface{tone}.TFrame")
+            row.pack(fill=X, pady=2)
+            badge = ttk.Label(
+                row,
+                text=self._network_capture_interface_badge(candidate),
+                style=f"Interface{tone}.TLabel",
+            )
+            badge.pack(side=LEFT, anchor="w", padx=(0, 6))
+            label = self._network_capture_interface_label(candidate)
+            check = ttk.Checkbutton(
+                row,
+                text=label,
+                variable=variable,
+                style=f"Interface{tone}.TCheckbutton",
+            )
+            check.pack(side=LEFT, anchor="w")
+            tooltip_text = self._network_capture_interface_tooltip(candidate)
+            _Tooltip(badge, tooltip_text)
+            _Tooltip(check, tooltip_text)
+            if hasattr(variable, "trace_add"):
+                variable.trace_add("write", lambda *_args: self._update_capture_interface_summary())
+            new_vars[key] = variable
+            if key in disabled:
+                try:
+                    variable.set(False)
+                except Exception:
+                    pass
+        self._capture_interface_checkbox_vars = new_vars
+        self._update_capture_interface_summary()
+        self._refresh_network_capture_scroll_region()
+
+    def _network_capture_interface_tone(self, candidate: dict[str, str]) -> str:
+        if self._network_capture_interface_has_traffic(candidate):
+            return "Traffic"
+        if str(candidate.get("active") or "").strip().lower() == "yes":
+            return "Active"
+        if str(candidate.get("kind") or "").strip().lower() in {"extcap", "loopback", "virtual", "vpn", "bluetooth"}:
+            return "Quiet"
+        return "Inactive"
+
+    def _network_capture_interface_badge(self, candidate: dict[str, str]) -> str:
+        tone = self._network_capture_interface_tone(candidate)
+        if tone == "Traffic":
+            return "\u0414\u0410\u041d\u041d\u042b\u0415"
+        if tone == "Active":
+            return "\u041b\u0418\u041d\u041a"
+        if tone == "Quiet":
+            return "\u0421\u041b\u0423\u0416."
+        return "\u041d\u0415\u0422"
+
+    def _network_capture_interface_has_traffic(self, candidate: dict[str, str]) -> bool:
+        if str(candidate.get("traffic_active") or "").strip().lower() == "yes":
+            return True
+        for key in ("received_bytes", "sent_bytes", "ReceivedBytes", "SentBytes"):
+            try:
+                if int(str(candidate.get(key) or "0").strip()) > 0:
+                    return True
+            except ValueError:
+                continue
+        return False
+
+    def _network_capture_interface_traffic_text(self, candidate: dict[str, str]) -> str:
+        if not self._network_capture_interface_has_traffic(candidate):
+            return ""
+        received = str(candidate.get("received_bytes") or candidate.get("ReceivedBytes") or "0").strip()
+        sent = str(candidate.get("sent_bytes") or candidate.get("SentBytes") or "0").strip()
+        return f"\u0442\u0440\u0430\u0444\u0438\u043a RX={received} TX={sent}"
+
+    def _network_capture_interface_label(self, candidate: dict[str, str]) -> str:
+        token = self._network_interface_id(candidate)
+        friendly = (candidate.get("friendly_name") or candidate.get("description") or token).strip()
+        status = self._network_capture_interface_status_text(candidate)
+        kind = self._network_capture_interface_kind_text(candidate)
+        link_speed = (candidate.get("link_speed") or "").strip()
+        suffix = f"; {link_speed}" if link_speed else ""
+        traffic_text = self._network_capture_interface_traffic_text(candidate)
+        if traffic_text:
+            suffix += f"; {traffic_text}"
+        return f"[{token}] {friendly} - {status}; {kind}{suffix}"
+
+    def _network_capture_interface_tooltip(self, candidate: dict[str, str]) -> str:
+        return (
+            f"Индекс: {candidate.get('index', '-')}; "
+            f"Имя: {candidate.get('name', '-')}; "
+            f"Статус: {candidate.get('status', '-')}; "
+            f"Тип: {candidate.get('kind', '-')}; "
+            f"Описание: {candidate.get('description', '-')}"
+        )
+
+    def _network_capture_interface_status_text(self, candidate: dict[str, str]) -> str:
+        active = (candidate.get("active") or "").strip().lower()
+        status = (candidate.get("status") or "").strip()
+        if active == "yes":
+            return "\u0410\u043a\u0442\u0438\u0432\u0435\u043d"
+        if active == "no":
+            return "\u041d\u0435\u0430\u043a\u0442\u0438\u0432\u0435\u043d" if status and status.lower() != "service" else "\u0421\u043b\u0443\u0436\u0435\u0431\u043d\u044b\u0439"
+        return f"\u0421\u0442\u0430\u0442\u0443\u0441: {status}" if status else "\u0421\u0442\u0430\u0442\u0443\u0441 \u043d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043d"
+
+    def _network_capture_interface_kind_text(self, candidate: dict[str, str]) -> str:
+        kind = (candidate.get("kind") or "").strip().lower()
+        return {
+            "physical": "\u0444\u0438\u0437\u0438\u0447\u0435\u0441\u043a\u0438\u0439",
+            "virtual": "\u0432\u0438\u0440\u0442\u0443\u0430\u043b\u044c\u043d\u044b\u0439",
+            "vpn": "VPN",
+            "loopback": "loopback",
+            "extcap": "\u0441\u043b\u0443\u0436\u0435\u0431\u043d\u044b\u0439",
+            "bluetooth": "Bluetooth",
+        }.get(kind, kind or "\u0442\u0438\u043f \u043d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043d")
+
+    def _load_network_capture_interfaces(self) -> None:
+        self._ensure_network_state()
+        self.network_capture_interface_summary.set("Поиск интерфейсов…")
         candidates, error = detect_tshark_interfaces()
         if not candidates:
             if error:
-                self._log(f"Автоподбор интерфейса: {error}")
+                self._log(f"Не удалось найти интерфейсы: {error}")
+                message = f"Ошибка поиска интерфейсов: {error}"
+            else:
+                message = "Интерфейсы не обнаружены."
+            self._append_network_scan_event(message)
+            self.network_capture_interfaces = []
+            self._build_network_capture_interface_checkbox_panel()
+            if error:
+                self.network_capture_interface_summary.set(error)
             return
-        disabled = self._network_interface_tokens("network_capture_excluded_interfaces")
-        for candidate in candidates:
-            if self._is_interface_disabled(candidate, disabled):
-                continue
-            value = candidate.get("name", "").strip() or candidate.get("index", "").strip()
-            if value:
-                self.network_capture_interface.set(value)
-                description = candidate.get("description", "").strip()
-                if description:
-                    self._log(f"Автоподбор интерфейса захвата: {value} ({description})")
-                else:
-                    self._log(f"Автоподбор интерфейса захвата: {value}")
-                return
-        self._log("Автоподбор интерфейса: все интерфейсы в списке отключены.")
-        self.network_capture_enabled.set(False)
-        self._log("Захват трафика отключён, так как все интерфейсы помечены как отключённые.")
+        self.network_capture_interfaces = candidates
+        self._build_network_capture_interface_checkbox_panel()
+        self._log(f"Загружено {len(candidates)} интерфейсов для захвата")
+        self._append_network_scan_event(f"Найдено {len(candidates)} интерфейсов захвата")
 
     def _open_network_commands(self) -> None:
         self._ensure_network_state()
@@ -993,7 +1376,6 @@ class AuditWindow:
             ("Порты Nmap", self.network_ports, "Например: 1-65535, 80,443,3389 или T:1-1024,U:53."),
             ("Профиль скорости", self.network_nmap_timing, "Значение nmap -T0..-T5. По умолчанию T2 — осторожный режим."),
             ("Доп. аргументы Nmap", self.network_extra_args, "Аргументы добавляются в конец nmap-команды перед целями."),
-            ("Интерфейс tshark", self.network_capture_interface, "Номер интерфейса из tshark -D. Если пусто, программа попробует выбрать первый доступный."),
             ("Отключенные интерфейсы", self.network_capture_excluded_interfaces, "Через ; или , перечислите интерфейсы из -D, которые нужно пропустить."),
             ("Длительность захвата, сек", self.network_capture_duration, "Ограничение tshark через -a duration:<секунды>."),
             ("Фильтр захвата", self.network_capture_filter, "BPF-фильтр tshark -f, например: tcp port 443 или host 192.168.1.10."),
@@ -1083,14 +1465,20 @@ class AuditWindow:
         thread.start()
 
     def _start(self, online_sources: bool, network_only: bool = False) -> None:
-        status = "Сетевой аудит" if network_only else "Полный аудит компьютера"
-        token = self._begin_operation(status)
-        self._log("=== Сетевой аудит ===" if network_only else "=== Новый аудит ===")
         mode = self._selected_vulnerability_mode()
-        self._log(f"Режим уязвимостей: {VULNERABILITY_MODE_TEXT[mode]}")
         network_scan = self._selected_network_scan_config()
-        if network_scan is not None:
-            self._start_network_scan_live_dashboard(network_scan, network_only)
+        if network_only and network_scan is None:
+            network_scan = self._build_default_network_only_scan_config()
+        if self._handle_missing_capture_interface_for_network_scan(network_scan):
+            return
+        if self._handle_missing_npcap_for_network_scan(network_scan):
+            return
+        status = "Аудит сети" if network_only else "Полный аудит рабочей станции"
+        token = self._begin_operation(status)
+        self._log("=== Аудит сети ===" if network_only else "=== Полный аудит ===")
+        self._log(f"Режим уязвимостей: {VULNERABILITY_MODE_TEXT[mode]}")
+        if network_scan is not None and hasattr(self, "root"):
+            self._start_network_scan_live_window(network_scan, network_only)
         if network_scan is not None or network_only:
             thread_args = (online_sources, mode, token, network_scan, network_only)
         else:
@@ -1101,6 +1489,58 @@ class AuditWindow:
             daemon=True,
         )
         thread.start()
+
+    def _handle_missing_capture_interface_for_network_scan(self, network_scan: NetworkScanConfig | None) -> bool:
+        if network_scan is None or not network_scan.capture_enabled or not hasattr(self, "root"):
+            return False
+        if network_scan.capture_interfaces or network_scan.capture_interface:
+            return False
+        messagebox.showwarning(
+            "\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441 \u0437\u0430\u0445\u0432\u0430\u0442\u0430",
+            "\u0417\u0430\u0445\u0432\u0430\u0442 \u0442\u0440\u0430\u0444\u0438\u043a\u0430 \u0432\u043a\u043b\u044e\u0447\u0451\u043d, \u043d\u043e \u0441\u0435\u0442\u0435\u0432\u043e\u0439 \u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441 \u043d\u0435 \u0432\u044b\u0431\u0440\u0430\u043d.\n\n"
+            "\u0410\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u0437\u0430\u0445\u0432\u0430\u0442 \u043f\u043e \u0432\u0441\u0435\u043c \u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u0430\u043c \u043e\u0442\u043a\u043b\u044e\u0447\u0451\u043d \u0434\u043b\u044f \u0441\u0442\u0430\u0431\u0438\u043b\u044c\u043d\u043e\u0441\u0442\u0438 \u0441\u0438\u0441\u0442\u0435\u043c\u044b. "
+            "Нажмите «Загрузить интерфейсы» и отметьте один активный интерфейс.",
+        )
+        return True
+
+    def _handle_missing_npcap_for_network_scan(self, network_scan: NetworkScanConfig | None) -> bool:
+        # Normal network audit uses safe Windows connection telemetry instead of
+        # Npcap/tshark live packet capture. Npcap is therefore not required here:
+        # repeated bugchecks showed that even one selected interface can crash in
+        # the kernel driver path, which Python cannot catch safely.
+        return False
+        if network_scan is None or not network_scan.capture_enabled or not hasattr(self, "root"):
+            return False
+        status = query_npcap_status()
+        if not status.install_required:
+            return False
+
+        installer = resolve_npcap_installer()
+        if installer is not None:
+            install_now = messagebox.askyesno(
+                "Npcap требуется для захвата",
+                "Для захвата сетевого трафика нужен драйвер Npcap.\n\n"
+                "Установить Npcap сейчас? После установки потребуется повторно запустить аудит.",
+            )
+            if install_now:
+                result = launch_npcap_installer(installer)
+                if result.ok:
+                    messagebox.showinfo(
+                        "Npcap",
+                        "Установка Npcap запущена. После установки повторно запустите аудит.",
+                    )
+                else:
+                    messagebox.showwarning("Npcap", result.message)
+            return True
+
+        open_download = messagebox.askyesno(
+            "Npcap требуется для захвата",
+            "Для захвата сетевого трафика нужен драйвер Npcap, но встроенный установщик не найден.\n\n"
+            "Открыть официальный сайт Npcap для ручной установки?",
+        )
+        if open_download:
+            webbrowser.open(NPCAP_DOWNLOAD_URL)
+        return True
 
     def _selected_vulnerability_mode(self) -> str:
         mode = self.vulnerability_mode.get()
@@ -1118,125 +1558,1079 @@ class AuditWindow:
             for item in self._network_string_value("network_targets").replace(";", ",").split(",")
             if item.strip()
         )
+        if not targets:
+            targets = local_machine_nmap_targets()
         try:
             capture_duration = int(self._network_string_value("network_capture_duration", "20") or "20")
         except ValueError:
             capture_duration = 20
+        capture_interfaces = self._network_capture_interface_tokens_from_ui()
+        capture_interface = capture_interfaces[0] if capture_interfaces else None
         return NetworkScanConfig(
             enabled=True,
+            nmap_enabled=self._network_bool_value("network_scan_enabled", False),
             targets=targets,
-            ports=self._network_string_value("network_ports", "1-65535") or "1-65535",
+            ports=self._network_string_value("network_ports", DEFAULT_LOCAL_NMAP_PORTS) or DEFAULT_LOCAL_NMAP_PORTS,
             extra_args=self._network_string_value("network_extra_args"),
             nmap_no_dns=self._network_bool_value("network_nmap_no_dns", True),
             nmap_skip_host_discovery=self._network_bool_value("network_nmap_skip_host_discovery", True),
             nmap_timing=self._network_string_value("network_nmap_timing", "T2") or "T2",
             nmap_open_only=self._network_bool_value("network_nmap_open_only", True),
-            nmap_os_detection=self._network_bool_value("network_nmap_os_detection", True),
+            nmap_os_detection=self._network_bool_value("network_nmap_os_detection", False),
             nmap_service_detection=self._network_bool_value("network_nmap_service_detection", True),
             capture_enabled=self._network_bool_value("network_capture_enabled"),
-            capture_interface=self._network_string_value("network_capture_interface") or None,
-            capture_disabled_interfaces=self._network_interface_tokens("network_capture_excluded_interfaces"),
+            capture_interfaces=capture_interfaces,
+            capture_interface=capture_interface,
+            capture_disabled_interfaces=self._network_capture_disabled_interfaces_from_ui(),
             capture_duration=max(1, capture_duration),
             capture_filter=self._network_string_value("network_capture_filter"),
             capture_no_name_resolution=self._network_bool_value("network_capture_no_name_resolution", True),
             capture_quiet=self._network_bool_value("network_capture_quiet", True),
         )
 
-    def _start_network_scan_live_dashboard(self, network_scan: NetworkScanConfig, network_only: bool) -> None:
-        path = Path(self.output_dir.get()) / "network-scan-live-dashboard.html"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._network_live_dashboard_path = path
-        self._network_report_path_for_dashboard = None
-        targets = ", ".join(network_scan.targets) or "auto-detect (from local interfaces)"
-        capture_mode = "enabled" if network_scan.capture_enabled else "disabled"
-        config_lines = [
-            f"Network scan mode: {'network only' if network_only else 'full audit'}",
-            f"Targets: {targets}",
-            f"Nmap ports: {network_scan.ports or '1-65535'}",
-            f"Capture: {capture_mode}",
+    def _build_default_network_only_scan_config(self) -> NetworkScanConfig:
+        capture_interface = self._network_capture_interface_tokens_from_ui()
+        capture_interfaces = capture_interface
+        capture_enabled = bool(self._network_bool_value("network_capture_enabled"))
+        return NetworkScanConfig(
+            enabled=True,
+            nmap_enabled=True,
+            targets=local_machine_nmap_targets(),
+            ports=self._network_string_value("network_ports", DEFAULT_LOCAL_NMAP_PORTS) or DEFAULT_LOCAL_NMAP_PORTS,
+            extra_args=self._network_string_value("network_extra_args"),
+            nmap_no_dns=self._network_bool_value("network_nmap_no_dns", True),
+            nmap_skip_host_discovery=self._network_bool_value("network_nmap_skip_host_discovery", True),
+            nmap_timing=self._network_string_value("network_nmap_timing", "T2") or "T2",
+            nmap_open_only=self._network_bool_value("network_nmap_open_only", True),
+            nmap_os_detection=self._network_bool_value("network_nmap_os_detection", False),
+            nmap_service_detection=self._network_bool_value("network_nmap_service_detection", True),
+            capture_enabled=capture_enabled,
+            capture_interfaces=capture_interfaces,
+            capture_interface=capture_interfaces[0] if capture_interfaces else None,
+            capture_disabled_interfaces=self._network_capture_disabled_interfaces_from_ui(),
+            capture_duration=max(1, int(self._network_string_value("network_capture_duration", "20") or "20")),
+            capture_filter=self._network_string_value("network_capture_filter"),
+            capture_no_name_resolution=self._network_bool_value("network_capture_no_name_resolution", True),
+            capture_quiet=self._network_bool_value("network_capture_quiet", True),
+        )
+
+    def _start_network_scan_live_window(self, network_scan: NetworkScanConfig, network_only: bool) -> None:
+        return self._start_network_scan_live_window_v2(network_scan, network_only)
+
+    def _start_network_scan_live_window_legacy(self, network_scan: NetworkScanConfig, network_only: bool) -> None:
+        if self._network_live_window:
+            self._close_network_scan_live_window()
+        window = Toplevel(self.root)
+        window.title("Сетевой живой мониторинг")
+        window.geometry("1024x700")
+        window.minsize(860, 560)
+        window.transient(self.root)
+        window.configure(background=COLORS["canvas"])
+        self._network_live_window = window
+        self._network_live_text = None
+        self._network_live_canvas = None
+        self._network_topology_nodes = set()
+        self._network_live_events = [
+            f"Режим: {'только сеть' if network_only else 'полный аудит'}",
+            f"Цели: {', '.join(network_scan.targets) or 'автоподбор'}",
+            f"Порты nmap: {network_scan.ports or '1-65535'}",
+            f"Захват трафика: {'включен' if network_scan.capture_enabled else 'выключен'}",
         ]
+        if network_scan.capture_enabled and network_scan.capture_interfaces:
+            self._network_live_events.append(f"Интерфейсы: {', '.join(network_scan.capture_interfaces)}")
+        if network_scan.capture_disabled_interfaces:
+            self._network_live_events.append(
+                "Отключены: " + ", ".join(network_scan.capture_disabled_interfaces)
+            )
         if network_scan.capture_enabled:
-            config_lines.append(f"Capture interface: {network_scan.capture_interface or 'auto'}")
-            if network_scan.capture_disabled_interfaces:
-                config_lines.append("Disabled interfaces: " + ", ".join(network_scan.capture_disabled_interfaces))
-            config_lines.append(f"Capture duration: {network_scan.capture_duration}s")
-        self._network_live_events = [f"Scan started: {line}" for line in config_lines]
-        self._render_network_scan_live_dashboard("Waiting for network scan messages...")
-        webbrowser.open(path.resolve().as_uri())
+            self._network_live_events.append(f"Длительность захвата: {network_scan.capture_duration} сек")
+
+        panel = ttk.Frame(window, style="Panel.TFrame", padding=(12, 10))
+        panel.pack(fill=BOTH, expand=True)
+        panel.grid_rowconfigure(0, weight=1)
+        panel.grid_columnconfigure(0, weight=1)
+
+        header = ttk.Frame(panel, style="Panel.TFrame")
+        header.grid(row=0, column=0, sticky="ew")
+        ttk.Label(header, text="Сетевой монитор", style="Section.TLabel").pack(side=LEFT)
+        ttk.Label(header, textvariable=self._network_live_status, style="Muted.TLabel").pack(
+            side=LEFT, padx=(8, 0)
+        )
+        self._network_live_report_button = ttk.Button(
+            header,
+            text="Открыть итоговый отчёт",
+            state="disabled",
+            command=self._open_network_live_report,
+            style="Primary.TButton",
+            cursor="hand2",
+        )
+        self._network_live_report_button.pack(side=RIGHT)
+
+        body = ttk.Frame(panel, style="Panel.TFrame")
+        body.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
+        body.grid_rowconfigure(0, weight=1)
+        body.grid_columnconfigure(0, weight=1)
+        body.grid_columnconfigure(1, weight=1)
+
+        left_panel = ttk.Frame(body, style="Panel.TFrame")
+        left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        self._network_live_canvas = Canvas(left_panel, bg="#0f172a", height=190, highlightthickness=0)
+        self._network_live_canvas.pack(fill=BOTH, expand=True)
+
+        right_panel = ttk.Frame(body, style="Panel.TFrame")
+        right_panel.grid(row=0, column=1, sticky="nsew")
+        self._network_live_text = scrolledtext.ScrolledText(
+            right_panel,
+            wrap="word",
+            font=("Consolas", 9),
+            background="#F8FAFB",
+            foreground=COLORS["text"],
+            insertbackground=COLORS["text"],
+            relief="flat",
+            borderwidth=0,
+            padx=10,
+            pady=8,
+            state="disabled",
+        )
+        self._network_live_text.pack(fill=BOTH, expand=True)
+        for tag, options in {
+            "risk_critical": {"foreground": "#7f1d1d", "background": "#fee2e2"},
+            "risk_high": {"foreground": "#991b1b", "background": "#fef2f2"},
+            "risk_medium": {"foreground": "#92400e", "background": "#fffbeb"},
+            "risk_low": {"foreground": "#166534", "background": "#f0fdf4"},
+            "risk_info": {"foreground": "#334155", "background": "#f8fafc"},
+            "phase": {"foreground": "#1d4ed8"},
+            "packet": {"foreground": "#0f766e"},
+        }.items():
+            try:
+                self._network_live_text.tag_configure(tag, **options)
+            except Exception:
+                pass
+        self._network_live_status.set("Запуск сетевого аудита…")
+        self._render_network_scan_live_dashboard("Сканирование запущено")
+        self._append_network_scan_event("Сетевой мониторинг активирован")
+
+    def _start_network_scan_live_window_v2(self, network_scan: NetworkScanConfig, network_only: bool) -> None:
+        if self._network_live_window:
+            self._close_network_scan_live_window()
+        window = Toplevel(self.root)
+        window.title("\u0421\u0435\u0442\u0435\u0432\u043e\u0439 \u0436\u0438\u0432\u043e\u0439 \u043c\u043e\u043d\u0438\u0442\u043e\u0440: Wireshark + Nmap")
+        window.geometry("1280x780")
+        window.minsize(1060, 640)
+        window.transient(self.root)
+        window.configure(background=COLORS["canvas"])
+        self._network_live_window = window
+        self._network_live_text = None
+        self._network_live_canvas = None
+        self._network_live_packet_table = None
+        self._network_live_packet_details_text = None
+        self._network_live_packet_hex_text = None
+        self._network_live_packet_detail_cache = {}
+        self._network_live_nodes_table = None
+        self._network_live_nmap_text = None
+        self._network_live_security_text = None
+        self._network_live_log_text = None
+        self._network_live_capture_banner = None
+        self._network_live_summary_vars = {}
+        self._network_topology_nodes = set()
+        self._network_live_events = [
+            "\u0420\u0435\u0436\u0438\u043c: " + ("\u0442\u043e\u043b\u044c\u043a\u043e \u0441\u0435\u0442\u044c" if network_only else "\u043f\u043e\u043b\u043d\u044b\u0439 \u0430\u0443\u0434\u0438\u0442"),
+            "\u0426\u0435\u043b\u0438: " + (", ".join(network_scan.targets) or "\u0430\u0432\u0442\u043e\u043f\u043e\u0434\u0431\u043e\u0440"),
+            "\u041f\u043e\u0440\u0442\u044b Nmap: " + ((network_scan.ports or "1-65535") if network_scan.nmap_enabled else "\u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d"),
+            "\u0417\u0430\u0445\u0432\u0430\u0442 \u0442\u0440\u0430\u0444\u0438\u043a\u0430: " + ("\u0432\u043a\u043b\u044e\u0447\u0435\u043d" if network_scan.capture_enabled else "\u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d"),
+            "RAW Wireshark/Npcap: \u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d \u0432 \u0431\u0435\u0437\u043e\u043f\u0430\u0441\u043d\u043e\u043c \u0440\u0435\u0436\u0438\u043c\u0435",
+        ]
+        if network_scan.capture_enabled and network_scan.capture_interfaces:
+            self._network_live_events.append("\u0418\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u044b: " + ", ".join(network_scan.capture_interfaces))
+        if network_scan.capture_disabled_interfaces:
+            self._network_live_events.append("\u041e\u0442\u043a\u043b\u044e\u0447\u0435\u043d\u044b: " + ", ".join(network_scan.capture_disabled_interfaces))
+        if network_scan.capture_enabled:
+            self._network_live_events.append("\u0414\u043b\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0441\u0442\u044c \u0437\u0430\u0445\u0432\u0430\u0442\u0430: " + str(network_scan.capture_duration) + " \u0441\u0435\u043a")
+
+        panel = ttk.Frame(window, style="Panel.TFrame", padding=(12, 10))
+        panel.pack(fill=BOTH, expand=True)
+        panel.grid_rowconfigure(3, weight=1)
+        panel.grid_columnconfigure(0, weight=1)
+
+        header = ttk.Frame(panel, style="Panel.TFrame")
+        header.grid(row=0, column=0, sticky="ew")
+        ttk.Label(header, text="\u0421\u0435\u0442\u0435\u0432\u043e\u0439 \u043c\u043e\u043d\u0438\u0442\u043e\u0440: Wireshark + Nmap", style="Section.TLabel").pack(side=LEFT)
+        ttk.Label(header, textvariable=self._network_live_status, style="Muted.TLabel").pack(side=LEFT, padx=(8, 0))
+        self._network_live_report_button = ttk.Button(
+            header,
+            text="\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u0438\u0442\u043e\u0433\u043e\u0432\u044b\u0439 \u043e\u0442\u0447\u0451\u0442",
+            state="disabled",
+            command=self._open_network_live_report,
+            style="Primary.TButton",
+            cursor="hand2",
+        )
+        self._network_live_report_button.pack(side=RIGHT)
+
+        capture_banner = Canvas(panel, height=50, bg="#064E3B", highlightthickness=0)
+        capture_banner.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        self._network_live_capture_banner = capture_banner
+        self._draw_network_live_capture_banner(
+            self._network_live_capture_banner_text(network_scan),
+            active=network_scan.capture_enabled,
+        )
+
+        summary = ttk.Frame(panel, style="Panel.TFrame")
+        summary.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        for index in range(6):
+            summary.grid_columnconfigure(index, weight=1)
+        summary_items = [
+            ("mode", "\u0420\u0435\u0436\u0438\u043c", "\u0422\u043e\u043b\u044c\u043a\u043e \u0441\u0435\u0442\u044c" if network_only else "\u041f\u043e\u043b\u043d\u044b\u0439 \u0430\u0443\u0434\u0438\u0442"),
+            ("targets", "\u0426\u0435\u043b\u0438", ", ".join(network_scan.targets) or "\u0430\u0432\u0442\u043e"),
+            ("ports", "Nmap", (network_scan.ports or "1-65535") if network_scan.nmap_enabled else "\u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d"),
+            ("capture", "\u0417\u0430\u0445\u0432\u0430\u0442", "\u0431\u0435\u0437\u043e\u043f\u0430\u0441\u043d\u044b\u0439" if network_scan.capture_enabled else "\u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d"),
+            ("packets", "\u041f\u0430\u043a\u0435\u0442\u044b", "0"),
+            ("risks", "\u0418\u0411-\u0441\u043e\u0431\u044b\u0442\u0438\u044f", "0"),
+        ]
+        for index, (key, label, value) in enumerate(summary_items):
+            card = ttk.Frame(summary, style="Panel.TFrame", padding=(10, 6))
+            card.grid(row=0, column=index, sticky="ew", padx=(0 if index == 0 else 6, 0))
+            ttk.Label(card, text=label, style="Muted.TLabel").pack(anchor="w")
+            var = StringVar(value=value)
+            self._network_live_summary_vars[key] = var
+            ttk.Label(card, textvariable=var, style="Body.TLabel").pack(anchor="w")
+
+        body = ttk.Frame(panel, style="Panel.TFrame")
+        body.grid(row=3, column=0, sticky="nsew", pady=(10, 0))
+        body.grid_rowconfigure(0, weight=3)
+        body.grid_rowconfigure(1, weight=2)
+        body.grid_columnconfigure(0, weight=3)
+        body.grid_columnconfigure(1, weight=2)
+
+        packet_panel = ttk.LabelFrame(body, text="Wireshark: \u043f\u0430\u043a\u0435\u0442\u044b \u0438 \u0442\u0440\u0430\u0444\u0438\u043a")
+        packet_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=(0, 10))
+        packet_panel.grid_rowconfigure(0, weight=4)
+        packet_panel.grid_rowconfigure(1, weight=2)
+        packet_panel.grid_columnconfigure(0, weight=1)
+        packet_columns = ("no", "time", "source", "destination", "protocol", "length", "info")
+        packet_table = ttk.Treeview(packet_panel, columns=packet_columns, show="headings", height=12)
+        for column, heading, width in (
+            ("no", "No.", 58),
+            ("time", "\u0412\u0440\u0435\u043c\u044f", 88),
+            ("source", "\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a", 160),
+            ("destination", "\u041d\u0430\u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435", 160),
+            ("protocol", "\u041f\u0440\u043e\u0442\u043e\u043a\u043e\u043b", 92),
+            ("length", "\u0414\u043b\u0438\u043d\u0430", 72),
+            ("info", "Info", 520),
+        ):
+            packet_table.heading(column, text=heading)
+            packet_table.column(column, width=width, minwidth=60, stretch=(column == "info"))
+        for tag, background in {
+            "critical": "#fee2e2",
+            "high": "#fef2f2",
+            "medium": "#fffbeb",
+            "low": "#f0fdf4",
+            "info": "#f8fafc",
+        }.items():
+            try:
+                packet_table.tag_configure(tag, background=background)
+            except Exception:
+                pass
+        packet_scroll = ttk.Scrollbar(packet_panel, orient="vertical", command=packet_table.yview)
+        packet_table.configure(yscrollcommand=packet_scroll.set)
+        packet_table.grid(row=0, column=0, sticky="nsew")
+        packet_scroll.grid(row=0, column=1, sticky="ns")
+        packet_detail_tabs = ttk.Notebook(packet_panel)
+        packet_detail_tabs.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(6, 0))
+        packet_details_tab = ttk.Frame(packet_detail_tabs, style="Panel.TFrame")
+        packet_hex_tab = ttk.Frame(packet_detail_tabs, style="Panel.TFrame")
+        packet_detail_tabs.add(packet_details_tab, text="\u0414\u0435\u0442\u0430\u043b\u0438 \u043f\u0430\u043a\u0435\u0442\u0430")
+        packet_detail_tabs.add(packet_hex_tab, text="Hex / bytes")
+        self._network_live_packet_details_text = scrolledtext.ScrolledText(
+            packet_details_tab,
+            wrap="word",
+            font=("Consolas", 9),
+            background="#F8FAFC",
+            foreground=COLORS["text"],
+            relief="flat",
+            borderwidth=0,
+            height=5,
+            state="disabled",
+        )
+        self._network_live_packet_details_text.pack(fill=BOTH, expand=True)
+        self._network_live_packet_hex_text = scrolledtext.ScrolledText(
+            packet_hex_tab,
+            wrap="word",
+            font=("Consolas", 9),
+            background="#0B1220",
+            foreground="#DBEAFE",
+            relief="flat",
+            borderwidth=0,
+            height=5,
+            state="disabled",
+        )
+        self._network_live_packet_hex_text.pack(fill=BOTH, expand=True)
+        packet_table.bind("<<TreeviewSelect>>", lambda _event: self._network_live_show_selected_packet_detail())
+        self._network_live_packet_table = packet_table
+
+        nmap_panel = ttk.LabelFrame(body, text="Nmap: \u0443\u0437\u043b\u044b, \u043f\u043e\u0440\u0442\u044b, \u0441\u0435\u0440\u0432\u0438\u0441\u044b")
+        nmap_panel.grid(row=0, column=1, sticky="nsew", pady=(0, 10))
+        nmap_panel.grid_rowconfigure(0, weight=1)
+        nmap_panel.grid_columnconfigure(0, weight=1)
+        self._network_live_nmap_text = scrolledtext.ScrolledText(
+            nmap_panel,
+            wrap="word",
+            font=("Consolas", 9),
+            background="#0B1220",
+            foreground="#DBEAFE",
+            insertbackground="#DBEAFE",
+            relief="flat",
+            borderwidth=0,
+            padx=10,
+            pady=8,
+            state="disabled",
+        )
+        self._network_live_nmap_text.grid(row=0, column=0, sticky="nsew")
+
+        topology_panel = ttk.LabelFrame(body, text="\u0421\u0445\u0435\u043c\u0430 \u0441\u0435\u0442\u0438 \u0438 \u0443\u0437\u043b\u044b")
+        topology_panel.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
+        topology_panel.grid_rowconfigure(0, weight=2)
+        topology_panel.grid_rowconfigure(1, weight=1)
+        topology_panel.grid_columnconfigure(0, weight=1)
+        self._network_live_canvas = Canvas(topology_panel, bg="#0f172a", height=150, highlightthickness=0)
+        self._network_live_canvas.grid(row=0, column=0, sticky="nsew")
+        nodes_table = ttk.Treeview(topology_panel, columns=("role", "address", "severity"), show="headings", height=4)
+        for column, heading, width in (("role", "\u0420\u043e\u043b\u044c", 100), ("address", "\u0410\u0434\u0440\u0435\u0441", 180), ("severity", "\u0420\u0438\u0441\u043a", 80)):
+            nodes_table.heading(column, text=heading)
+            nodes_table.column(column, width=width, minwidth=70, stretch=True)
+        nodes_table.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self._network_live_nodes_table = nodes_table
+
+        lower_right = ttk.Notebook(body)
+        lower_right.grid(row=1, column=1, sticky="nsew")
+        security_tab = ttk.Frame(lower_right, style="Panel.TFrame")
+        log_tab = ttk.Frame(lower_right, style="Panel.TFrame")
+        lower_right.add(security_tab, text="\u0418\u0411-\u0430\u043d\u0430\u043b\u0438\u0437")
+        lower_right.add(log_tab, text="\u0416\u0443\u0440\u043d\u0430\u043b")
+        for tab in (security_tab, log_tab):
+            tab.grid_rowconfigure(0, weight=1)
+            tab.grid_columnconfigure(0, weight=1)
+        self._network_live_security_text = scrolledtext.ScrolledText(
+            security_tab,
+            wrap="word",
+            font=("Consolas", 9),
+            background="#FFF7ED",
+            foreground="#431407",
+            insertbackground="#431407",
+            relief="flat",
+            borderwidth=0,
+            padx=10,
+            pady=8,
+            state="disabled",
+        )
+        self._network_live_security_text.grid(row=0, column=0, sticky="nsew")
+        self._network_live_log_text = scrolledtext.ScrolledText(
+            log_tab,
+            wrap="word",
+            font=("Consolas", 9),
+            background="#F8FAFB",
+            foreground=COLORS["text"],
+            insertbackground=COLORS["text"],
+            relief="flat",
+            borderwidth=0,
+            padx=10,
+            pady=8,
+            state="disabled",
+        )
+        self._network_live_log_text.grid(row=0, column=0, sticky="nsew")
+        self._network_live_text = self._network_live_log_text
+        for text_widget in (self._network_live_nmap_text, self._network_live_security_text, self._network_live_log_text):
+            for tag, options in {
+                "risk_critical": {"foreground": "#7f1d1d", "background": "#fee2e2"},
+                "risk_high": {"foreground": "#991b1b", "background": "#fef2f2"},
+                "risk_medium": {"foreground": "#92400e", "background": "#fffbeb"},
+                "risk_low": {"foreground": "#166534", "background": "#f0fdf4"},
+                "risk_info": {"foreground": "#334155", "background": "#f8fafc"},
+                "phase": {"foreground": "#60A5FA"},
+                "packet": {"foreground": "#0f766e"},
+            }.items():
+                try:
+                    text_widget.tag_configure(tag, **options)
+                except Exception:
+                    pass
+        self._network_live_status.set("\u0417\u0430\u043f\u0443\u0441\u043a \u0441\u0435\u0442\u0435\u0432\u043e\u0433\u043e \u0430\u0443\u0434\u0438\u0442\u0430...")
+        self._render_network_scan_live_dashboard("\u0421\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435 \u0437\u0430\u043f\u0443\u0449\u0435\u043d\u043e")
+        self._append_network_scan_event("\u0421\u0435\u0442\u0435\u0432\u043e\u0439 \u043c\u043e\u043d\u0438\u0442\u043e\u0440\u0438\u043d\u0433 \u0430\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u043d")
+        if network_scan.nmap_enabled:
+            self._append_network_scan_event("Nmap: \u043e\u0436\u0438\u0434\u0430\u043d\u0438\u0435 \u0437\u0430\u043f\u0443\u0441\u043a\u0430 \u0441\u0435\u0442\u0435\u0432\u043e\u0433\u043e \u0441\u043a\u0430\u043d\u0435\u0440\u0430")
+        else:
+            self._append_network_scan_event("Nmap: \u043f\u0440\u043e\u043f\u0443\u0449\u0435\u043d, \u0432\u044b\u0431\u0440\u0430\u043d \u0442\u043e\u043b\u044c\u043a\u043e \u0437\u0430\u0445\u0432\u0430\u0442 \u0442\u0440\u0430\u0444\u0438\u043a\u0430")
+        if network_scan.capture_enabled:
+            capture_interfaces = ", ".join(network_scan.capture_interfaces) or "\u043d\u0435 \u0432\u044b\u0431\u0440\u0430\u043d\u044b"
+            self._append_network_scan_event(
+                "CAPTURE_ACTIVE|info|"
+                "\u0417\u0430\u0445\u0432\u0430\u0442 \u0442\u0440\u0430\u0444\u0438\u043a\u0430 \u0432\u044b\u043f\u043e\u043b\u043d\u044f\u0435\u0442\u0441\u044f: "
+                f"\u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u044b={capture_interfaces}; "
+                f"\u0434\u043b\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0441\u0442\u044c={network_scan.capture_duration} \u0441\u0435\u043a; "
+                "\u0440\u0435\u0436\u0438\u043c=safe Windows TCP/RX-TX telemetry"
+            )
+        else:
+            self._append_network_scan_event("Traffic: \u043e\u0436\u0438\u0434\u0430\u043d\u0438\u0435 \u0431\u0435\u0437\u043e\u043f\u0430\u0441\u043d\u043e\u0439 TCP-\u0442\u0435\u043b\u0435\u043c\u0435\u0442\u0440\u0438\u0438")
+
+    def _extract_topology_nodes(self, message: str) -> list[str]:
+        event = (message or "").strip()
+        if event.startswith(("TRAFFIC_RISK|", "TRAFFIC_FLOW|", "PACKET_SAMPLE|", "PACKET_ROW|")):
+            payload = event.split("|", 2)[-1] if "|" in event else event
+            if event.startswith("PACKET_ROW|"):
+                try:
+                    decoded = json.loads(payload)
+                except Exception:
+                    decoded = {}
+                if isinstance(decoded, dict):
+                    json_nodes = []
+                    for key in ("Source", "Destination"):
+                        endpoint = str(decoded.get(key) or "").strip()
+                        match = re.search(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", endpoint)
+                        if match:
+                            json_nodes.append(match.group(0))
+                    if json_nodes:
+                        return json_nodes
+            nodes: list[str] = []
+            for raw in payload.replace("->", " ").replace(";", " ").replace(",", " ").split():
+                token = raw.strip("[]() ")
+                if ":" in token:
+                    token = token.split(":", 1)[0]
+                parts = token.split(".")
+                if len(parts) == 4 and all(part.isdigit() and 0 <= int(part) <= 255 for part in parts):
+                    nodes.append(token)
+            return nodes
+        if event.lower().startswith("network hosts discovered:"):
+            payload = event.split(":", 1)[1] if ":" in event else ""
+            return [item.strip() for item in payload.replace("...", ",").replace("\n", ",").split(",") if item.strip()]
+        generic_nodes: list[str] = []
+        for match in re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", event):
+            parts = match.split(".")
+            if all(part.isdigit() and 0 <= int(part) <= 255 for part in parts) and match not in generic_nodes:
+                generic_nodes.append(match)
+        return generic_nodes
+
+    def _render_network_scan_live_topology(self) -> None:
+        if not self._network_live_canvas:
+            return
+        canvas = self._network_live_canvas
+        canvas.delete("all")
+        width = int(canvas.winfo_width())
+        height = int(canvas.winfo_height())
+        if width <= 1:
+            width = 720
+        if height <= 1:
+            height = 160
+        nodes = sorted(self._network_topology_nodes)
+        if not nodes:
+            if self._network_live_capture_active():
+                pulse_x = width / 2
+                pulse_y = height / 2 - 18
+                canvas.create_oval(
+                    pulse_x - 54,
+                    pulse_y - 54,
+                    pulse_x + 54,
+                    pulse_y + 54,
+                    fill="#064E3B",
+                    outline="#34D399",
+                    width=3,
+                )
+                canvas.create_oval(
+                    pulse_x - 30,
+                    pulse_y - 30,
+                    pulse_x + 30,
+                    pulse_y + 30,
+                    fill="#10B981",
+                    outline="#A7F3D0",
+                    width=2,
+                )
+                canvas.create_text(
+                    pulse_x,
+                    pulse_y,
+                    text="\u25cf",
+                    fill="#ECFDF5",
+                    font=("Segoe UI", 22, "bold"),
+                )
+                canvas.create_text(
+                    width / 2,
+                    pulse_y + 70,
+                    text="\u0417\u0430\u0445\u0432\u0430\u0442 \u0442\u0440\u0430\u0444\u0438\u043a\u0430 \u0432\u044b\u043f\u043e\u043b\u043d\u044f\u0435\u0442\u0441\u044f",
+                    fill="#D1FAE5",
+                    font=("Segoe UI", 11, "bold"),
+                )
+                canvas.create_text(
+                    width / 2,
+                    pulse_y + 92,
+                    text="\u0421\u0431\u043e\u0440 TCP-\u0441\u043e\u0435\u0434\u0438\u043d\u0435\u043d\u0438\u0439 \u0438 RX/TX-\u0441\u0447\u0451\u0442\u0447\u0438\u043a\u043e\u0432 \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u044b\u0445 \u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u043e\u0432",
+                    fill="#A7F3D0",
+                    font=("Segoe UI", 9),
+                )
+                return
+            canvas.create_text(
+                width / 2,
+                height / 2,
+                text="Сеть ещё не распознана. Ожидайте события сканирования.",
+                fill="#94A3B8",
+                font=("Segoe UI", 10),
+            )
+            return
+        center_x = width * 0.52
+        center_y = height * 0.62
+        canvas.create_oval(
+            center_x - 58,
+            center_y - 24,
+            center_x + 58,
+            center_y + 24,
+            fill="#2563EB",
+            outline="#93C5FD",
+            width=2,
+        )
+        canvas.create_text(
+            center_x,
+            center_y,
+            text="Gateway",
+            fill="#FFFFFF",
+            font=("Segoe UI", 9, "bold"),
+        )
+        if nodes:
+            limited_nodes = nodes[:12]
+            for index, node in enumerate(limited_nodes):
+                angle = ((index / max(1, len(limited_nodes))) * 2 * 3.141592653589793) - 1.45
+                radius_x = width * 0.34
+                radius_y = height * 0.23
+                x = center_x + radius_x * (0.6 + index * 0.02) * (1 if index % 2 else -1) * 0.35
+                y = center_y - radius_y
+                if len(limited_nodes) > 1:
+                    y = center_y - 40 + (radius_y * ((index % 2) * -2 + 1)) * (1 + (index / max(1, len(limited_nodes))))
+                    x = center_x + ((index - len(limited_nodes) / 2) * (width - 120) / max(1, len(limited_nodes)))
+                z = 1.0 - 0.02 * index
+                blob = int(30 * (0.62 + max(0.0, z)))
+                node_x = max(22, min(width - 22, x))
+                node_y = max(22, min(height - 22, y))
+                canvas.create_line(center_x, center_y, node_x, node_y, fill="#94A3B8", width=1, dash=(3, 2))
+                canvas.create_oval(
+                    node_x - blob,
+                    node_y - int(blob * 0.55),
+                    node_x + blob,
+                    node_y + int(blob * 0.55),
+                    fill="#0f766e" if index % 2 else "#15803d",
+                    outline="#E2E8F0",
+                    width=1,
+                )
+                canvas.create_text(
+                    node_x,
+                    node_y - 7,
+                    text=node,
+                    fill="#E5E7EB",
+                    font=("Segoe UI", 7),
+                    anchor="s",
+                )
+        else:
+            canvas.create_text(width / 2, height / 2, text="Узлы не определены", fill="#94A3B8")
 
     def _render_network_scan_live_dashboard(self, status: str) -> None:
-        if not self._network_live_dashboard_path:
+        if (
+            self._network_live_packet_table
+            or self._network_live_nmap_text
+            or self._network_live_security_text
+            or self._network_live_log_text
+        ):
+            self._render_network_scan_live_console(status)
             return
-        status_text = html.escape(status or "")
-        report_link = ""
-        if self._network_report_path_for_dashboard and Path(self._network_report_path_for_dashboard).exists():
-            report_uri = Path(self._network_report_path_for_dashboard).resolve().as_uri()
-            report_link = (
-                "<a href='{uri}' target='_blank' style='"
-                "padding:4px 9px; background:#dcfce7; color:#166534;"
-                "text-decoration:none; border-radius:999px; font-size:12px;"
-                "'>"
-                "Открыть итоговый сетевой отчёт</a>"
-            ).format(uri=html.escape(report_uri, quote=True))
-        event_rows = "".join(
-            f"<li>{html.escape(event)}</li>" for event in self._network_live_events[-90:]
+        if not self._network_live_text or not self._network_live_window:
+            return
+        self._network_live_status.set(status)
+        self._network_live_text.configure(state="normal")
+        self._network_live_text.delete("1.0", END)
+        for event in self._network_live_events[-180:]:
+            display_text, tag = self._network_live_event_display(event)
+            if tag:
+                self._network_live_text.insert(END, f"{display_text}\n", tag)
+            else:
+                self._network_live_text.insert(END, f"{display_text}\n")
+        self._network_live_text.configure(state="disabled")
+        self._network_live_text.see(END)
+        self._render_network_scan_live_topology()
+
+    def _render_network_scan_live_console(self, status: str) -> None:
+        if not self._network_live_window:
+            return
+        self._network_live_status.set(status)
+        events = self._network_live_events[-500:]
+        packet_rows = []
+        nmap_events = []
+        security_events = []
+        for event in events:
+            packet_row = self._network_live_wireshark_packet_row(event)
+            if packet_row:
+                packet_rows.append(packet_row)
+            if self._network_live_event_is_nmap(event):
+                nmap_events.append(event)
+            if self._network_live_event_is_security(event):
+                security_events.append(event)
+        self._network_live_update_summary(packet_rows, security_events)
+        self._network_live_fill_packet_table(packet_rows[-250:])
+        self._network_live_fill_nodes_table()
+        self._network_live_fill_text(self._network_live_nmap_text, nmap_events[-180:], empty="Nmap \u0435\u0449\u0451 \u043d\u0435 \u0432\u0435\u0440\u043d\u0443\u043b \u0441\u043e\u0431\u044b\u0442\u0438\u044f.")
+        self._network_live_fill_text(
+            self._network_live_security_text,
+            security_events[-180:],
+            empty="\u0418\u0411-\u0440\u0438\u0441\u043a\u0438 \u043f\u043e\u043a\u0430 \u043d\u0435 \u043e\u0431\u043d\u0430\u0440\u0443\u0436\u0435\u043d\u044b.",
         )
-        html_payload = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta http-equiv="refresh" content="2">
-<title>Network scan dashboard</title>
-<style>
-body{{margin:0;background:#f4f6fa;font-family:Segoe UI,Arial,sans-serif;color:#0f172a;padding:20px}}
-.panel{{max-width:980px;margin:0 auto;background:#fff;border:1px solid #d8dee9;border-radius:10px;padding:14px}}
-.row{{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0}}
-.chip{{background:#eef2ff;color:#1e40af;border-radius:999px;padding:4px 8px;font-size:12px}}
-.events{{background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:10px;max-height:340px;overflow:auto;list-style:none;margin:0}}
-.events li{{margin:0 0 6px 0;padding:4px;border-bottom:1px dotted #e2e8f0}}
-.status{{font-size:12px;color:#334155;margin:6px 0}}
-.muted{{color:#64748b;font-size:12px}}
-</style>
-</head>
-<body>
- <div class="panel">
-   <h2 style="margin:0 0 6px 0">Network capture/dashboard</h2>
-   <p class="status">{status_text}</p>
-   <div class="row">
-     <div class="chip">Live scan status</div>
-     <div class="chip">Topology map built in report</div>
-    </div>
-   <div class="row">{report_link}</div>
-   <h3 style="margin:8px 0 6px 0">Scan feed</h3>
-   <ul class="events">{event_rows}</ul>
-   <p class="muted">Auto-refresh: every 2 seconds. Last {len(self._network_live_events)} events shown.</p>
-</div>
-</body>
-</html>"""
-        self._network_live_dashboard_path.write_text(html_payload, encoding="utf-8")
+        self._network_live_fill_text(self._network_live_log_text, events[-220:], empty="\u0416\u0443\u0440\u043d\u0430\u043b \u043f\u0443\u0441\u0442.")
+        self._render_network_scan_live_topology()
+
+    def _network_live_update_summary(self, packet_rows: list[tuple[str, str, str, str, str, str, str, str, str, str]], security_events: list[str]) -> None:
+        nodes = sorted(self._network_topology_nodes)
+        targets_value = f"{len(nodes)} \u0443\u0437\u043b." if nodes else None
+        values = {
+            "packets": str(len(packet_rows)),
+            "risks": str(len(security_events)),
+            "capture": "\u0431\u0435\u0437\u043e\u043f\u0430\u0441\u043d\u044b\u0439",
+        }
+        if targets_value:
+            values["targets"] = targets_value
+        for key, value in values.items():
+            var = self._network_live_summary_vars.get(key)
+            if var:
+                var.set(value)
+
+    def _network_live_fill_packet_table(self, rows: list[tuple[str, str, str, str, str, str, str, str, str, str]]) -> None:
+        table = self._network_live_packet_table
+        if not table:
+            return
+        try:
+            table.delete(*table.get_children())
+            self._network_live_packet_detail_cache = {}
+            if not rows:
+                if self._network_live_capture_active():
+                    iid = table.insert(
+                        "",
+                        END,
+                        values=(
+                            "-",
+                            "-",
+                            "\u0432\u044b\u0431\u0440\u0430\u043d\u043d\u044b\u0435 \u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u044b",
+                            "safe telemetry",
+                            "CAPTURE",
+                            "-",
+                            "\u0417\u0430\u0445\u0432\u0430\u0442 \u0442\u0440\u0430\u0444\u0438\u043a\u0430 \u0432\u044b\u043f\u043e\u043b\u043d\u044f\u0435\u0442\u0441\u044f: \u043e\u0436\u0438\u0434\u0430\u043d\u0438\u0435 TCP/RX/TX-\u0441\u043e\u0431\u044b\u0442\u0438\u0439",
+                        ),
+                        tags=("info",),
+                    )
+                    self._network_live_packet_detail_cache[str(iid)] = (
+                        "\u0417\u0430\u0445\u0432\u0430\u0442 \u0430\u043a\u0442\u0438\u0432\u0435\u043d, \u043e\u0436\u0438\u0434\u0430\u044e\u0442\u0441\u044f \u0441\u0442\u0440\u043e\u043a\u0438 PACKET_ROW \u043e\u0442 tshark.",
+                        "",
+                    )
+                    self._network_live_show_packet_detail(*self._network_live_packet_detail_cache[str(iid)])
+                    return
+                iid = table.insert("", END, values=("-", "-", "-", "-", "-", "-", "\u0421\u043e\u0431\u044b\u0442\u0438\u044f \u0442\u0440\u0430\u0444\u0438\u043a\u0430 \u0435\u0449\u0451 \u043d\u0435 \u043f\u043e\u043b\u0443\u0447\u0435\u043d\u044b"))
+                self._network_live_packet_detail_cache[str(iid)] = ("", "")
+                self._network_live_show_packet_detail("", "")
+                return
+            for row in rows:
+                severity = row[7].lower()
+                iid = table.insert("", END, values=row[:7], tags=(severity,))
+                self._network_live_packet_detail_cache[str(iid)] = (row[8], row[9])
+            children = table.get_children()
+            if children:
+                latest = children[-1]
+                table.selection_set(latest)
+                table.focus(latest)
+                details, bytes_hex = self._network_live_packet_detail_cache.get(str(latest), ("", ""))
+                self._network_live_show_packet_detail(details, bytes_hex)
+        except Exception:
+            return
+
+    def _network_live_show_selected_packet_detail(self) -> None:
+        table = self._network_live_packet_table
+        if not table:
+            return
+        try:
+            selected = table.selection()
+            if not selected:
+                return
+            details, bytes_hex = self._network_live_packet_detail_cache.get(str(selected[0]), ("", ""))
+            self._network_live_show_packet_detail(details, bytes_hex)
+        except Exception:
+            return
+
+    def _network_live_show_packet_detail(self, details: str, bytes_hex: str) -> None:
+        for widget, text, empty in (
+            (
+                self._network_live_packet_details_text,
+                details,
+                "\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u043f\u0430\u043a\u0435\u0442, \u0447\u0442\u043e\u0431\u044b \u0443\u0432\u0438\u0434\u0435\u0442\u044c \u0434\u0435\u0442\u0430\u043b\u0438.",
+            ),
+            (
+                self._network_live_packet_hex_text,
+                bytes_hex,
+                "\u0411\u0430\u0439\u0442\u044b \u043f\u0430\u043a\u0435\u0442\u0430 \u043d\u0435 \u043f\u0435\u0440\u0435\u0434\u0430\u043d\u044b tshark \u0434\u043b\u044f \u044d\u0442\u043e\u0439 \u0441\u0442\u0440\u043e\u043a\u0438.",
+            ),
+        ):
+            if not widget:
+                continue
+            try:
+                widget.configure(state="normal")
+                widget.delete("1.0", END)
+                widget.insert(END, (text or empty) + "\n")
+                widget.configure(state="disabled")
+                widget.see("1.0")
+            except Exception:
+                continue
+
+    def _network_live_fill_nodes_table(self) -> None:
+        table = self._network_live_nodes_table
+        if not table:
+            return
+        try:
+            table.delete(*table.get_children())
+            nodes = sorted(self._network_topology_nodes)
+            if not nodes:
+                table.insert("", END, values=("\u043e\u0436\u0438\u0434\u0430\u043d\u0438\u0435", "-", "\u0418\u041d\u0424\u041e"))
+                return
+            for node in nodes[:100]:
+                role = self._network_live_node_role(node)
+                severity = self._network_live_node_severity(node)
+                table.insert("", END, values=(role, node, severity.upper()), tags=(severity,))
+        except Exception:
+            return
+
+    def _network_live_fill_text(self, widget: scrolledtext.ScrolledText | None, events: list[str], empty: str) -> None:
+        if not widget:
+            return
+        try:
+            widget.configure(state="normal")
+            widget.delete("1.0", END)
+            if not events:
+                widget.insert(END, empty + "\n", "risk_info")
+            for event in events:
+                display_text, tag = self._network_live_event_display(event)
+                if tag:
+                    widget.insert(END, f"{display_text}\n", tag)
+                else:
+                    widget.insert(END, f"{display_text}\n")
+            widget.configure(state="disabled")
+            widget.see(END)
+        except Exception:
+            return
+
+    def _network_live_wireshark_packet_row(self, event: str) -> tuple[str, str, str, str, str, str, str, str, str, str] | None:
+        value = str(event or "").strip()
+        if value.startswith("PACKET_ROW|"):
+            parts = value.split("|", 2)
+            severity = parts[1].strip().upper() if len(parts) > 1 else "INFO"
+            payload = parts[2].strip() if len(parts) > 2 else "{}"
+            try:
+                row = json.loads(payload)
+            except Exception:
+                row = {}
+            if isinstance(row, dict):
+                return (
+                    str(row.get("No.") or row.get("No") or "-"),
+                    str(row.get("Time") or "-"),
+                    str(row.get("Source") or "-"),
+                    str(row.get("Destination") or "-"),
+                    str(row.get("Protocol") or "UNKNOWN"),
+                    str(row.get("Length") or "-"),
+                    str(row.get("Info") or "")[:900],
+                    severity if severity in {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"} else "INFO",
+                    str(row.get("Details") or ""),
+                    str(row.get("Bytes Hex") or row.get("Hex") or ""),
+                )
+        fallback = self._network_live_packet_row(value)
+        if fallback is None:
+            return None
+        severity, protocol, source, destination, info = fallback
+        number_match = re.search(r"#(?P<number>\d+)", info)
+        time_match = re.search(r"\bt=(?P<time>[0-9.]+)", info)
+        length_match = re.search(r"\blen=(?P<length>\d+)", info)
+        return (
+            number_match.group("number") if number_match else "-",
+            time_match.group("time") if time_match else "-",
+            source or "-",
+            destination or "-",
+            protocol or "UNKNOWN",
+            length_match.group("length") if length_match else "-",
+            info[:900],
+            severity,
+            info,
+            "",
+        )
+
+    def _network_live_packet_row(self, event: str) -> tuple[str, str, str, str, str] | None:
+        value = str(event or "").strip()
+        tagged = value.startswith(("PACKET_SAMPLE|", "PACKET_ROW|", "TRAFFIC_RISK|", "TRAFFIC_FLOW|", "CAPTURE_ACTIVE|", "CAPTURE_PROGRESS|"))
+        lowered = value.casefold()
+        if not tagged and not any(marker in lowered for marker in ("traffic", "tcp", "udp", "packet", "connection", "get-nettcpconnection", "interface telemetry", "get-netadapterstatistics", "capture active", "\u0437\u0430\u0445\u0432\u0430\u0442 \u0442\u0440\u0430\u0444\u0438\u043a\u0430")):
+            return None
+        severity = self._network_live_event_severity(value).upper()
+        payload = value.split("|", 2)[-1].strip() if tagged and "|" in value else value
+        source, destination = self._network_live_endpoint_pair(payload)
+        protocol = self._network_live_event_protocol(payload)
+        return severity, protocol, source or "-", destination or "-", payload[:360]
+
+    def _network_live_endpoint_pair(self, payload: str) -> tuple[str, str]:
+        interface_match = re.search(r"interface telemetry\s*\[(?P<iface>[^\]]+)\]", payload, re.IGNORECASE)
+        if interface_match:
+            return interface_match.group("iface").strip(), "RX/TX counters"
+        capture_match = re.search(r"(?:\u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u044b|interfaces?)\s*=\s*(?P<iface>[^;]+)", payload, re.IGNORECASE)
+        if capture_match:
+            return capture_match.group("iface").strip(), "safe telemetry"
+        match = re.search(
+            r"(?P<src>\b\d{1,3}(?:\.\d{1,3}){3})(?::(?P<src_port>\d+))?\s*(?:->|=>|to)\s*"
+            r"(?P<dst>\b\d{1,3}(?:\.\d{1,3}){3})(?::(?P<dst_port>\d+))?",
+            payload,
+            re.IGNORECASE,
+        )
+        if not match:
+            return "", ""
+        source = match.group("src")
+        destination = match.group("dst")
+        if match.group("src_port"):
+            source += f":{match.group('src_port')}"
+        if match.group("dst_port"):
+            destination += f":{match.group('dst_port')}"
+        return source, destination
+
+    def _network_live_event_protocol(self, payload: str) -> str:
+        upper = payload.upper()
+        if (
+            "CAPTURE" in upper
+            or "\u0417\u0410\u0425\u0412\u0410\u0422 \u0422\u0420\u0410\u0424\u0418\u041A\u0410" in upper
+            or "\u0417\u0410\u0425\u0412\u0410\u0422 \u041F\u0410\u041A\u0415\u0422\u041E\u0412" in upper
+        ):
+            return "CAPTURE"
+        if "INTERFACE TELEMETRY" in upper or "GET-NETADAPTERSTATISTICS" in upper:
+            return "INTERFACE"
+        if "SAFE TRAFFIC TELEMETRY" in upper or "GET-NETTCPCONNECTION" in upper:
+            return "TCP"
+        for protocol in ("HTTP", "HTTPS", "TLS", "DNS", "SMB", "RDP", "SSH", "ICMP", "ARP", "DHCP", "LDAP", "KERBEROS", "FTP", "SMTP", "TCP", "UDP"):
+            if re.search(rf"\b{protocol}\b", upper):
+                return protocol
+        port_map = {
+            ":80": "HTTP",
+            ":443": "TLS",
+            ":53": "DNS",
+            ":445": "SMB",
+            ":3389": "RDP",
+            ":22": "SSH",
+            ":25": "SMTP",
+            ":21": "FTP",
+        }
+        for marker, protocol in port_map.items():
+            if marker in payload:
+                return protocol
+        return "TCP/UDP"
+
+    def _network_live_event_severity(self, event: str) -> str:
+        if event.startswith(("TRAFFIC_RISK|", "PACKET_SAMPLE|", "PACKET_ROW|", "TRAFFIC_FLOW|")):
+            parts = event.split("|", 2)
+            if len(parts) > 1:
+                severity = parts[1].strip().lower()
+                if severity in {"critical", "high", "medium", "low", "info"}:
+                    return severity
+        lowered = event.casefold()
+        if any(marker in lowered for marker in ("critical", "clear-text", "exposed", "credential", "high")):
+            return "high"
+        if any(marker in lowered for marker in ("warning", "medium", "suspicious", "risk")):
+            return "medium"
+        return "info"
+
+    def _network_live_event_is_nmap(self, event: str) -> bool:
+        lowered = str(event or "").casefold()
+        return any(
+            marker in lowered
+            for marker in (
+                "nmap",
+                "network_intelligence",
+                "network hosts discovered",
+                "critical service found",
+                "open service",
+                "open port",
+                "service detection",
+            )
+        )
+
+    def _network_live_event_is_security(self, event: str) -> bool:
+        lowered = str(event or "").casefold()
+        if str(event or "").startswith("PACKET_ROW|") and self._network_live_event_severity(str(event or "")) != "info":
+            return True
+        return str(event or "").startswith("TRAFFIC_RISK|") or any(
+            marker in lowered
+            for marker in (
+                "critical service found",
+                "clear-text",
+                "credential",
+                "suspicious",
+                "risk",
+                "exposed",
+                "vulnerab",
+            )
+        )
+
+    def _network_live_status_for_event(self, event: str) -> str | None:
+        value = str(event or "").strip()
+        lowered = value.casefold()
+        if not value:
+            return None
+        if value.startswith("CAPTURE_ACTIVE|") or "\u0437\u0430\u0445\u0432\u0430\u0442 \u0442\u0440\u0430\u0444\u0438\u043a\u0430 \u0432\u044b\u043f\u043e\u043b\u043d\u044f\u0435\u0442\u0441\u044f" in lowered:
+            return "\u0417\u0430\u0445\u0432\u0430\u0442 \u0442\u0440\u0430\u0444\u0438\u043a\u0430 \u0432\u044b\u043f\u043e\u043b\u043d\u044f\u0435\u0442\u0441\u044f"
+        if value.startswith("CAPTURE_PROGRESS|") or "safe traffic telemetry started" in lowered:
+            return "\u0417\u0430\u0445\u0432\u0430\u0442 \u0442\u0440\u0430\u0444\u0438\u043a\u0430 \u0432\u044b\u043f\u043e\u043b\u043d\u044f\u0435\u0442\u0441\u044f"
+        if lowered.startswith("running collector:"):
+            collector = value.split(":", 1)[1].strip() if ":" in value else value
+            return f"\u042d\u0442\u0430\u043f: {collector}"
+        if "network intelligence scan started" in lowered:
+            return "\u0421\u0435\u0442\u0435\u0432\u043e\u0439 \u0438\u043d\u0442\u0435\u043b\u043b\u0435\u043a\u0442: \u0441\u0442\u0430\u0440\u0442"
+        if "nmap" in lowered:
+            return "Nmap: \u0432\u044b\u043f\u043e\u043b\u043d\u044f\u0435\u0442\u0441\u044f"
+        if "traffic" in lowered or "get-nettcpconnection" in lowered:
+            return "\u0422\u0440\u0430\u0444\u0438\u043a: \u0430\u043d\u0430\u043b\u0438\u0437 \u0432\u044b\u043f\u043e\u043b\u043d\u044f\u0435\u0442\u0441\u044f"
+        if "audit completed" in lowered or "network intelligence completed" in lowered:
+            return "\u0421\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435 \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u043e"
+        return None
+
+    def _network_live_node_role(self, node: str) -> str:
+        if node.endswith(".1") or node.endswith(".254"):
+            return "\u0448\u043b\u044e\u0437"
+        return "\u0443\u0437\u0435\u043b"
+
+    def _network_live_node_severity(self, node: str) -> str:
+        order = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+        selected = "info"
+        for event in self._network_live_events:
+            if node not in event:
+                continue
+            severity = self._network_live_event_severity(event)
+            if order.get(severity, 0) > order.get(selected, 0):
+                selected = severity
+        return selected
+
+    def _network_live_event_display(self, event: str) -> tuple[str, str]:
+        value = str(event or "")
+        if value.startswith("TRAFFIC_RISK|"):
+            parts = value.split("|", 2)
+            severity = parts[1].strip().lower() if len(parts) > 1 else "info"
+            payload = parts[2].strip() if len(parts) > 2 else value
+            if severity not in {"critical", "high", "medium", "low", "info"}:
+                severity = "info"
+            return f"[{severity.upper()}] {payload}", f"risk_{severity}"
+        if value.startswith(("PACKET_SAMPLE|", "PACKET_ROW|")):
+            parts = value.split("|", 2)
+            payload = parts[2].strip() if len(parts) > 2 else value
+            return f"[PACKET] {payload}", "packet"
+        if value.startswith(("CAPTURE_ACTIVE|", "CAPTURE_PROGRESS|")):
+            parts = value.split("|", 2)
+            payload = parts[2].strip() if len(parts) > 2 else value
+            return f"[CAPTURE] {payload}", "packet"
+        lowered = value.casefold()
+        if "nmap" in lowered or "traffic analysis phase" in lowered or "network intelligence" in lowered:
+            return value, "phase"
+        return value, ""
+
+    def _network_live_capture_active(self) -> bool:
+        events = [str(event or "") for event in getattr(self, "_network_live_events", [])[-80:]]
+        for event in reversed(events):
+            lowered = event.casefold()
+            if (
+                "\u0441\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435 \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u043e" in lowered
+                or "network intelligence completed" in lowered
+                or "audit completed" in lowered
+            ):
+                return False
+            if (
+                event.startswith(("CAPTURE_ACTIVE|", "CAPTURE_PROGRESS|"))
+                or "\u0437\u0430\u0445\u0432\u0430\u0442 \u0442\u0440\u0430\u0444\u0438\u043a\u0430 \u0432\u044b\u043f\u043e\u043b\u043d\u044f\u0435\u0442\u0441\u044f" in lowered
+                or "safe traffic telemetry started" in lowered
+            ):
+                return True
+        return False
+
+    def _network_live_capture_banner_text(self, network_scan: NetworkScanConfig) -> str:
+        if not network_scan.capture_enabled:
+            return "○ ЗАХВАТ ТРАФИКА ВЫКЛЮЧЕН | включите захват и выберите интерфейс"
+        interfaces = ", ".join(network_scan.capture_interfaces)
+        if not interfaces and network_scan.capture_interface:
+            interfaces = str(network_scan.capture_interface)
+        if not interfaces:
+            interfaces = "не выбраны"
+        nmap_note = "Nmap после первичного захвата" if network_scan.nmap_enabled else "Nmap выключен"
+        return (
+            f"● ЗАХВАТ ТРАФИКА ИДЁТ | интерфейсы: {interfaces} | "
+            f"tshark/Wireshark live packets | {network_scan.capture_duration} сек | {nmap_note}"
+        )
+
+    def _draw_network_live_capture_banner(self, text: str, active: bool) -> None:
+        banner = getattr(self, "_network_live_capture_banner", None)
+        if not banner:
+            return
+        background = "#064E3B" if active else "#334155"
+        foreground = "#ECFDF5" if active else "#E2E8F0"
+        try:
+            banner.configure(bg=background)
+            banner.delete("all")
+            banner.create_rectangle(0, 0, 5000, 80, fill=background, outline=background)
+            banner.create_text(
+                18,
+                25,
+                text=text,
+                anchor="w",
+                fill=foreground,
+                font=("Segoe UI", 12, "bold"),
+            )
+        except Exception:
+            return
 
     def _append_network_scan_event(self, message: str) -> None:
-        if not self._network_live_dashboard_path:
-            return
         event = str(message or "").strip()
         if not event:
             return
         self._network_live_events.append(event)
-        if len(self._network_live_events) > 90:
-            self._network_live_events = self._network_live_events[-90:]
-        self._render_network_scan_live_dashboard(event)
+        if len(self._network_live_events) > 800:
+            self._network_live_events = self._network_live_events[-800:]
+        for host in self._extract_topology_nodes(event):
+            if host:
+                self._network_topology_nodes.add(host)
+        status = self._network_live_status_for_event(event) or self._network_live_status.get()
+        if status:
+            self._network_live_status.set(status)
+        self._render_network_scan_live_dashboard(status)
+
+    def _set_network_live_report_path(self, path_value: str | None) -> None:
+        if not self._network_live_report_button or not path_value:
+            return
+        self.last_report = path_value
+        self._append_network_scan_event(f"Отчёт готов: {Path(path_value).name}")
+        self._network_live_report_button.configure(state="normal")
 
     def _finish_network_scan_dashboard(self, final_status: str) -> None:
-        if not self._network_live_dashboard_path:
+        if not self._network_live_window:
             return
-        if self._network_report_path_for_dashboard:
-            self._append_network_scan_event(
-                f"Report generated: {Path(self._network_report_path_for_dashboard).name}"
-            )
         if final_status:
             self._append_network_scan_event(final_status)
-        self._render_network_scan_live_dashboard(final_status or "Scan finished")
-        self._network_live_dashboard_path = None
+        self._append_network_scan_event("Сканирование завершено")
+        self._render_network_scan_live_topology()
+
+    def _open_network_live_report(self) -> None:
+        if self.last_report and Path(self.last_report).exists():
+            webbrowser.open(Path(self.last_report).resolve().as_uri())
+            return
+        messagebox.showinfo("Отчёт", "Итоговый отчёт ещё не сформирован.")
+
+    def _close_network_scan_live_window(self) -> None:
+        if not self._network_live_window:
+            return
+        try:
+            self._network_live_window.destroy()
+        except Exception:
+            pass
+        self._network_live_window = None
+        self._network_live_text = None
+        self._network_live_canvas = None
+        self._network_live_report_button = None
+        self._network_live_packet_table = None
+        self._network_live_packet_details_text = None
+        self._network_live_packet_hex_text = None
+        self._network_live_packet_detail_cache = {}
 
     def _run_background(
         self,
@@ -1260,8 +2654,8 @@ body{{margin:0;background:#f4f6fa;font-family:Segoe UI,Arial,sans-serif;color:#0
             )
             self.last_report = str(result["report_path"])
             self.messages.put(format_result_message(result))
-            if self._network_live_dashboard_path:
-                self.messages.put(f"__REPORT_PATH__:{self.last_report}")
+            if self._network_live_window:
+                self.messages.put(f"__NETWORK_REPORT_PATH__:{self.last_report}")
             self.messages.put(f"Отчёт: {self.last_report}")
             self.messages.put("__STATUS__:success:Аудит завершён")
         except AuditCancelled:
@@ -1383,6 +2777,7 @@ body{{margin:0;background:#f4f6fa;font-family:Segoe UI,Arial,sans-serif;color:#0
             return 0
 
     def _drain_messages(self) -> None:
+        self._ensure_network_state()
         while True:
             try:
                 message = self.messages.get_nowait()
@@ -1412,9 +2807,9 @@ body{{margin:0;background:#f4f6fa;font-family:Segoe UI,Arial,sans-serif;color:#0
                 )
                 payload = message.split(":", 1)[1]
                 explicit_tone, separator, status_text = payload.partition(":")
-                if self._network_live_dashboard_path and explicit_tone in {"success", "error", "cancelled"}:
+                if self._network_live_window and explicit_tone in {"success", "error", "cancelled"}:
                     self._finish_network_scan_dashboard(f"Scan result: {payload}")
-                elif self._network_live_dashboard_path:
+                elif self._network_live_window:
                     self._append_network_scan_event(f"STATUS: {payload}")
                 if separator and explicit_tone in {"success", "error", "cancelled"}:
                     tone = explicit_tone
@@ -1422,29 +2817,18 @@ body{{margin:0;background:#f4f6fa;font-family:Segoe UI,Arial,sans-serif;color:#0
                     status_text = payload
                     tone = "error" if "Ошибка" in status_text else "success"
                 self._finish_operation(status_text, tone)
-            elif message.startswith("__REPORT_PATH__:"):
+            elif message.startswith("__NETWORK_REPORT_PATH__:"):
                 path_value = message.split(":", 1)[1].strip()
-                if path_value and self._network_live_dashboard_path:
-                    self._network_report_path_for_dashboard = path_value
-                    self._append_network_scan_event(f"Report ready: {path_value}")
+                if path_value and self._network_live_window:
+                    self._set_network_live_report_path(path_value)
             elif message.startswith("__SOURCES__:"):
                 self.source_status.set(message.split(":", 1)[1])
             else:
                 self.progress.configure(
                     value=progress_value_for_message(message, self._current_progress_value())
                 )
-                if self._network_live_dashboard_path:
-                    lowered = message.casefold()
-                    if (
-                        lowered.startswith("running collector:")
-                        or "network intelligence" in lowered
-                        or "starting traffic capture" in lowered
-                        or "traffic capture completed" in lowered
-                        or "running nmap" in lowered
-                        or "nmap scan" in lowered
-                        or "audit completed" in lowered
-                    ):
-                        self._append_network_scan_event(message)
+                if self._network_live_window:
+                    self._append_network_scan_event(message)
                 progress_status = progress_status_for_message(message)
                 if progress_status:
                     self._set_progress_status(progress_status)
@@ -1474,7 +2858,9 @@ body{{margin:0;background:#f4f6fa;font-family:Segoe UI,Arial,sans-serif;color:#0
         webbrowser.open(path.resolve().as_uri())
 
     def run(self) -> None:
+        _frozen_startup_log("mainloop enter")
         self.root.mainloop()
+        _frozen_startup_log("mainloop exit")
 
 
 def main() -> None:

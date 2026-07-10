@@ -1,4 +1,5 @@
 import os
+import json
 import re
 import sys
 import unittest
@@ -282,6 +283,55 @@ class BatchHtmlReportBuilderTests(unittest.TestCase):
         object_card = rendered.split("class='object-card'", 1)[1].split("</article>", 1)[0]
 
         self.assertNotIn("object-risk-links", object_card)
+
+    def test_batch_report_renders_wireshark_packet_rows_for_network_capture(self):
+        result = make_result("PC-A")
+        packet_flow = InventoryObject(
+            "N",
+            "Network Traffic Capture",
+            "network_capture",
+            "192.168.1.10:51516 -> 93.184.216.34:80 (HTTP)",
+            {
+                "Source": "192.168.1.10",
+                "Destination": "93.184.216.34",
+                "Protocol": "HTTP",
+                "Source Port": "51516",
+                "Destination Port": "80",
+                "Packets": "1",
+                "Bytes": "140",
+                "Traffic Severity": "high",
+                "Traffic Findings": "Clear-text HTTP request observed",
+                "Packet Rows JSON": json.dumps([
+                    {
+                        "No.": "7",
+                        "Time": "10.125",
+                        "Source": "192.168.1.10:51516",
+                        "Destination": "93.184.216.34:80",
+                        "Protocol": "HTTP",
+                        "Length": "140",
+                        "Info": "GET /login HTTP/1.1",
+                        "Risk": "high",
+                        "Details": "Frame 7: 140 bytes",
+                        "Bytes Hex": "00 01 02 0a 0b 0c",
+                    }
+                ]),
+            },
+            "tshark",
+        )
+        result.inventory.append(packet_flow)
+        batch = BatchAssessment.create([Path("PC-A.html")], [result], [], "completed")
+
+        rendered = BatchHtmlReportBuilder().render(batch)
+
+        self.assertIn("Обобщенное описание трафика", rendered)
+        self.assertIn("Схема сети и узлы", rendered)
+        self.assertIn("network-map-svg", rendered)
+        self.assertIn("packet-list-collapsed", rendered)
+        self.assertIn("protocol-badge protocol-http", rendered)
+        self.assertIn("Wireshark packet list", rendered)
+        self.assertIn("packet-list", rendered)
+        self.assertIn("GET /login HTTP/1.1", rendered)
+        self.assertIn("00 01 02 0a 0b 0c", rendered)
 
     def test_exact_risk_navigation_opens_host_and_highlights_target(self):
         rendered = BatchHtmlReportBuilder().render(

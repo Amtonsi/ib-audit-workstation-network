@@ -3,13 +3,15 @@ import contextlib
 import importlib.util
 import io
 import sys
+import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, os.path.abspath("src"))
 
-from ib_audit.commands import hidden_subprocess_kwargs, run_command
+from ib_audit.commands import hidden_subprocess_kwargs, resolve_tool_command, run_command
 
 
 class CommandRunnerTests(unittest.TestCase):
@@ -60,6 +62,20 @@ class CommandRunnerTests(unittest.TestCase):
         self.assertEqual(result.stdout, "\u041c\u0430\u0439\u043a\u0440\u043e\u0441\u043e\u0444\u0442")
         self.assertNotIn("\ufffd", result.stdout)
 
+    def test_run_command_decodes_windows_ansi_output_without_mojibake(self):
+        cp1251_bytes = "\u0411\u0435\u0441\u043f\u0440\u043e\u0432\u043e\u0434\u043d\u0430\u044f \u0441\u0435\u0442\u044c".encode("cp1251")
+        command = [
+            sys.executable,
+            "-c",
+            f"import sys; sys.stdout.buffer.write(bytes.fromhex('{cp1251_bytes.hex()}'))",
+        ]
+
+        result = run_command(command)
+
+        self.assertEqual(result.stdout, "\u0411\u0435\u0441\u043f\u0440\u043e\u0432\u043e\u0434\u043d\u0430\u044f \u0441\u0435\u0442\u044c")
+        self.assertNotIn("\ufffd", result.stdout)
+        self.assertNotIn("\u2500", result.stdout)
+
     def test_run_command_keeps_utf8_output(self):
         utf8_bytes = "\u0422\u0435\u0441\u0442 UTF-8".encode("utf-8")
         command = [
@@ -71,6 +87,46 @@ class CommandRunnerTests(unittest.TestCase):
         result = run_command(command)
 
         self.assertEqual(result.stdout, "\u0422\u0435\u0441\u0442 UTF-8")
+
+    def test_resolve_tool_command_copies_pyinstaller_tool_to_persistent_cache(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            meipass = temp_path / "bundle"
+            source_dir = meipass / "tools" / "nmap"
+            source_dir.mkdir(parents=True)
+            source_executable = source_dir / "nmap.exe"
+            source_executable.write_text("fake nmap", encoding="utf-8")
+            local_app_data = temp_path / "local-app-data"
+
+            with patch.object(sys, "_MEIPASS", str(meipass), create=True), \
+                    patch.dict(os.environ, {"LOCALAPPDATA": str(local_app_data)}, clear=False), \
+                    patch("ib_audit.commands.shutil.which", return_value=None):
+                resolved = Path(resolve_tool_command("nmap"))
+
+            expected = local_app_data / "IBAuditWorkstation" / "bundled-tools" / "nmap" / "nmap.exe"
+            self.assertEqual(expected, resolved)
+            self.assertTrue(resolved.exists())
+            self.assertEqual("fake nmap", resolved.read_text(encoding="utf-8"))
+
+    def test_resolve_tool_command_extracts_pyinstaller_tool_zip_to_persistent_cache(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            meipass = temp_path / "bundle"
+            bundle_dir = meipass / "tools-bundles"
+            bundle_dir.mkdir(parents=True)
+            with zipfile.ZipFile(bundle_dir / "wireshark.zip", "w") as archive:
+                archive.writestr("tshark.exe", "fake tshark")
+            local_app_data = temp_path / "local-app-data"
+
+            with patch.object(sys, "_MEIPASS", str(meipass), create=True), \
+                    patch.dict(os.environ, {"LOCALAPPDATA": str(local_app_data)}, clear=False), \
+                    patch("ib_audit.commands.shutil.which", return_value=None):
+                resolved = Path(resolve_tool_command("tshark"))
+
+            expected = local_app_data / "IBAuditWorkstation" / "bundled-tools" / "wireshark" / "tshark.exe"
+            self.assertEqual(expected, resolved)
+            self.assertTrue(resolved.exists())
+            self.assertEqual("fake tshark", resolved.read_text(encoding="utf-8"))
 
     def test_update_database_script_enables_cpe_and_prints_stats(self):
         module = self._load_update_database_script()

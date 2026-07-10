@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import socket
 import time
+import inspect
 from dataclasses import asdict
 from typing import Callable
 
@@ -16,6 +17,39 @@ from .network_scan import NetworkScanConfig
 
 
 ProgressCallback = Callable[[str], None]
+
+
+def _execute_collector(
+    func: Callable[..., tuple[list[InventoryObject], list[CollectorDiagnostic]]],
+    progress: ProgressCallback,
+) -> tuple[list[InventoryObject], list[CollectorDiagnostic]]:
+    probe = getattr(func, "side_effect", func)
+    try:
+        signature = inspect.signature(probe)
+    except (TypeError, ValueError):
+        signature = None
+    if signature is not None:
+        positional_params = [
+            param
+            for param in signature.parameters.values()
+            if param.kind in {
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            }
+        ]
+        accepts_variadic = any(
+            param.kind is inspect.Parameter.VAR_POSITIONAL
+            for param in signature.parameters.values()
+        )
+        if not positional_params and not accepts_variadic:
+            return func()
+    try:
+        return func(progress)
+    except TypeError as exc:
+        message = str(exc)
+        if "positional" not in message and "argument" not in message:
+            raise
+        return func()
 
 
 class AuditEngine:
@@ -45,7 +79,7 @@ class AuditEngine:
                 start = time.perf_counter()
                 self.progress(f"Running collector: {collector.name}")
                 try:
-                    objects, diag = collector.func(self.progress)
+                    objects, diag = _execute_collector(collector.func, self.progress)
                     self.cancel_token.raise_if_cancelled()
                     inventory.extend(objects)
                     diagnostics.extend(diag)

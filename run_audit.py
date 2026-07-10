@@ -9,7 +9,7 @@ if SRC not in sys.path:
     sys.path.insert(0, SRC)
 
 from ib_audit.app import run_audit
-from ib_audit.network_scan import NetworkScanConfig
+from ib_audit.network_scan import DEFAULT_LOCAL_NMAP_PORTS, NetworkScanConfig, local_machine_nmap_targets
 
 
 def main() -> int:
@@ -33,12 +33,12 @@ def main() -> int:
     parser.add_argument(
         "--network-targets",
         default="",
-        help="Comma or semicolon separated scan targets (CIDR/hostname). If empty, use local routes.",
+        help="Comma or semicolon separated scan targets. If empty, scan only this computer.",
     )
     parser.add_argument(
         "--network-ports",
-        default="1-65535",
-        help="Port list/range for nmap (default: 1-65535).",
+        default=DEFAULT_LOCAL_NMAP_PORTS,
+        help=f"Port list/range for nmap (default: {DEFAULT_LOCAL_NMAP_PORTS}).",
     )
     parser.add_argument(
         "--network-extra-args",
@@ -48,14 +48,21 @@ def main() -> int:
     parser.add_argument(
         "--network-scan-timeout",
         type=int,
-        default=600,
-        help="nmap timeout in seconds.",
+        default=120,
+        help="nmap timeout in seconds (default: 120).",
+    )
+    parser.add_argument(
+        "--nmap-os-detection",
+        action="store_true",
+        help="Enable optional nmap OS detection (-O).",
     )
     parser.add_argument(
         "--no-nmap-os-detection",
-        action="store_true",
-        help="Disable nmap OS detection (-O).",
+        action="store_false",
+        dest="nmap_os_detection",
+        help=argparse.SUPPRESS,
     )
+    parser.set_defaults(nmap_os_detection=False)
     parser.add_argument(
         "--no-nmap-service-detection",
         action="store_true",
@@ -89,11 +96,11 @@ def main() -> int:
     raw_targets = [item.strip() for item in args.network_targets.replace(";", ",").split(",") if item.strip()]
     network_scan_config = NetworkScanConfig(
         enabled=enabled_network_scan,
-        targets=tuple(raw_targets),
+        targets=tuple(raw_targets) or local_machine_nmap_targets(),
         ports=args.network_ports,
         extra_args=args.network_extra_args,
         nmap_timeout=args.network_scan_timeout,
-        nmap_os_detection=not args.no_nmap_os_detection,
+        nmap_os_detection=args.nmap_os_detection,
         nmap_service_detection=not args.no_nmap_service_detection,
         capture_enabled=args.network_capture,
         capture_interface=(args.network_capture_interface or None),

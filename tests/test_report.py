@@ -1,4 +1,5 @@
 import os
+import json
 import shutil
 import sys
 import tempfile
@@ -142,6 +143,25 @@ class HtmlReportBuilderTests(unittest.TestCase):
                 "Bytes": "4200",
                 "Direction": "internal",
                 "Destination Scope": "private",
+                "Traffic Severity": "high",
+                "Traffic Color": "#ef4444",
+                "Traffic Findings": "Clear-text HTTP request; External boundary traffic",
+                "Packet Samples": "#7 t=10.1 HTTP 192.168.1.10:51515 -> 192.168.1.20:443 len=4200 info=Client Hello",
+                "Packet Rows JSON": json.dumps([
+                    {
+                        "No.": "7",
+                        "Time": "10.1",
+                        "Source": "192.168.1.10:51515",
+                        "Destination": "192.168.1.20:443",
+                        "Protocol": "HTTP",
+                        "Length": "4200",
+                        "Info": "GET /login HTTP/1.1",
+                        "Risk": "high",
+                        "Details": "Frame 7: 4200 bytes\nProtocol stack: eth:ip:tcp:http",
+                        "Bytes Hex": "00 01 02 0a 0b 0c",
+                    }
+                ]),
+                "Packet Row Count": "1",
             },
             "tshark",
         )
@@ -154,6 +174,21 @@ class HtmlReportBuilderTests(unittest.TestCase):
         self.assertIn("192.168.1.10:51515", html)
         self.assertIn("192.168.1.20:443", html)
         self.assertIn("nginx 1.18.0", html)
+        self.assertIn("traffic-row high", html)
+        self.assertIn("Traffic risk analysis", html)
+        self.assertIn("Captured packet samples", html)
+        self.assertIn("Обобщенное описание трафика", html)
+        self.assertIn("Схема сети и узлы", html)
+        self.assertIn("network-map-svg", html)
+        self.assertIn("packet-list-collapsed", html)
+        self.assertIn("protocol-badge protocol-http", html)
+        self.assertIn("protocol-badge protocol-tls", html)
+        self.assertIn("Wireshark packet list", html)
+        self.assertIn("packet-list", html)
+        self.assertIn("Clear-text HTTP request", html)
+        self.assertIn("#7 t=10.1 HTTP", html)
+        self.assertIn("GET /login HTTP/1.1", html)
+        self.assertIn("00 01 02 0a 0b 0c", html)
 
     def test_report_shows_source_snapshot_freshness(self):
         run = AuditRun.create("TEST-PC", True)
