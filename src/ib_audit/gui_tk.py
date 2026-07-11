@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import BOTH, END, LEFT, RIGHT, X, Y, BooleanVar, Canvas, StringVar, Tk, Toplevel, filedialog, messagebox, scrolledtext, ttk
 
+import customtkinter as ctk
+
 from .app import (
     VULNERABILITY_MODE_FAST,
     VULNERABILITY_MODE_FULL,
@@ -23,6 +25,7 @@ from .app import (
 from .batch import BatchProgress
 from .cancellation import AuditCancelled, CancellationToken
 from .commands import terminate_network_tool_processes
+from .design_system import APP_COLORS
 from .models import SourceSnapshot
 from .network_scan import (
     DEFAULT_LOCAL_NMAP_PORTS,
@@ -39,22 +42,25 @@ VULNERABILITY_MODE_TEXT = {
     VULNERABILITY_MODE_FAST: "Быстро: кэш NVD/CISA",
 }
 
-COLORS = {
-    "canvas": "#F3F6F8",
-    "header": "#172126",
-    "header_muted": "#B8C4C9",
-    "rail": "#FFFFFF",
-    "panel": "#FFFFFF",
-    "border": "#DCE3E7",
-    "text": "#172126",
-    "muted": "#62727A",
-    "teal": "#0F766E",
-    "teal_hover": "#115E59",
-    "blue": "#2563EB",
-    "violet": "#6D4AFF",
-    "amber": "#B45309",
-    "red": "#B91C1C",
-    "green": "#15803D",
+COLORS = dict(APP_COLORS)
+
+REFERENCE_COLORS = {
+    "canvas": "#EAF4F4",
+    "header": "#154F55",
+    "header_deep": "#103F45",
+    "aqua": "#57E3D2",
+    "teal": "#0E8B80",
+    "teal_hover": "#0A746C",
+    "rail": "#F3F8F7",
+    "panel": "#FBFDFD",
+    "line": "#D8E5E6",
+    "text": "#082F35",
+    "muted": "#667D82",
+    "navy": "#0D2340",
+    "green": "#22C77A",
+    "amber": "#F59E0B",
+    "red": "#FA565D",
+    "blue": "#2F6FED",
 }
 
 DEVELOPER_CREDIT = "Разработал: Абдрахманов Амаль Даулетович"
@@ -426,6 +432,8 @@ class AuditWindow:
         self.root.protocol("WM_DELETE_WINDOW", self._close_application)
         _frozen_startup_log("tk root created")
         self.root.title("IB Audit Workstation")
+        self.root.option_add("*Font", ("Segoe UI", 10))
+        self.root.configure(background=COLORS["canvas"])
         self.window_bounds = window_bounds_for_screen(
             self.root.winfo_screenwidth(),
             self.root.winfo_screenheight(),
@@ -440,13 +448,13 @@ class AuditWindow:
         self.root.configure(background=COLORS["canvas"])
         self.output_dir = StringVar(value=str(default_output_dir()))
         self.db_path = StringVar(value=str(default_output_dir() / "ib_audit.db"))
-        self.status = StringVar(value=presentation_for("ready").text)
+        self.status = StringVar(value="● Система готова")
         self.source_status = StringVar(value="кэш источников: проверяется при аудите")
         self.progress_status = StringVar(value="Прогресс: ожидание")
         self.vulnerability_mode = StringVar(value=VULNERABILITY_MODE_FULL)
-        self.network_scan_enabled = BooleanVar(value=False)
-        self.network_capture_enabled = BooleanVar(value=False)
-        self.network_targets = StringVar(value="")
+        self.network_scan_enabled = BooleanVar(value=True)
+        self.network_capture_enabled = BooleanVar(value=True)
+        self.network_targets = StringVar(value="127.0.0.1")
         self.network_ports = StringVar(value=DEFAULT_LOCAL_NMAP_PORTS)
         self.network_extra_args = StringVar(value="")
         self.network_capture_interface = StringVar(value="")
@@ -483,12 +491,18 @@ class AuditWindow:
         self._network_live_security_text: scrolledtext.ScrolledText | None = None
         self._network_live_log_text: scrolledtext.ScrolledText | None = None
         self._network_live_summary_vars: dict[str, StringVar] = {}
+        self._network_live_capture_summary = StringVar(value="Захват подготавливается")
+        self._network_live_security_frame = None
+        self._network_live_security_canvas = None
+        self._reference_live_ui = False
+        self._use_reference_ui = True
         self.messages: queue.Queue[object] = queue.Queue()
         self.action_buttons: list[ttk.Button] = []
         self.active_cancel_token: CancellationToken | None = None
         self._last_responsive_layout: ResponsiveLayout | None = None
         self._applying_responsive_layout = False
         self._configure_styles()
+        self._configure_reference_styles()
         _frozen_startup_log("styles configured")
         self._build()
         _frozen_startup_log("widgets built")
@@ -660,7 +674,613 @@ class AuditWindow:
                 padding=(10, 6),
             )
 
+    def _configure_reference_styles(self) -> None:
+        p = REFERENCE_COLORS
+        frame_styles = {
+            "ReferenceShell.TFrame": p["canvas"],
+            "ReferenceHeader.TFrame": p["header"],
+            "ReferenceRail.TFrame": p["rail"],
+            "ReferenceWorkspace.TFrame": "#FFFFFF",
+            "ReferenceCard.TFrame": p["panel"],
+            "ReferenceCommand.TFrame": p["header_deep"],
+            "LiveHeader.TFrame": p["header"],
+            "LiveBody.TFrame": p["canvas"],
+            "LivePanel.TFrame": p["panel"],
+            "LiveConsole.TFrame": p["navy"],
+        }
+        for name, background in frame_styles.items():
+            self.style.configure(name, background=background)
+        for name in ("ReferenceCard.TFrame", "LivePanel.TFrame"):
+            self.style.configure(
+                name, bordercolor=p["line"], lightcolor=p["line"],
+                darkcolor=p["line"], relief="solid",
+            )
+        self.style.configure(
+            "ReferenceTitle.TLabel", background=p["header"], foreground="#FFFFFF",
+            font=("Segoe UI Semibold", 17),
+        )
+        self.style.configure(
+            "ReferenceSubtitle.TLabel", background=p["header"], foreground="#BFE9E5",
+            font=("Segoe UI", 9),
+        )
+        self.style.configure(
+            "ReferenceLogo.TLabel", background=p["aqua"], foreground=p["header_deep"],
+            font=("Segoe UI Semibold", 17), padding=(7, 1),
+        )
+        self.style.configure(
+            "ReferenceSystem.TLabel", background="#2A6670", foreground="#E9FFFF",
+            font=("Segoe UI Semibold", 9), padding=(18, 7),
+        )
+        self.style.configure(
+            "ReferenceSection.TLabel", background=p["rail"], foreground=p["muted"],
+            font=("Segoe UI Semibold", 8),
+        )
+        self.style.configure(
+            "ReferenceHeading.TLabel", background="#FFFFFF", foreground=p["text"],
+            font=("Segoe UI Semibold", 16),
+        )
+        self.style.configure(
+            "ReferenceDescription.TLabel", background="#FFFFFF", foreground=p["muted"],
+            font=("Segoe UI", 9),
+        )
+        self.style.configure(
+            "ReferenceCardTitle.TLabel", background=p["panel"], foreground=p["text"],
+            font=("Segoe UI Semibold", 10),
+        )
+        self.style.configure(
+            "ReferenceField.TLabel", background=p["panel"], foreground=p["text"],
+            font=("Segoe UI Semibold", 8),
+        )
+        self.style.configure(
+            "ReferenceMuted.TLabel", background=p["panel"], foreground=p["muted"],
+            font=("Segoe UI", 8),
+        )
+        self.style.configure(
+            "ReferenceEntry.TEntry", fieldbackground="#FFFFFF", foreground=p["text"],
+            bordercolor=p["line"], lightcolor=p["line"], darkcolor=p["line"],
+            padding=(10, 8),
+        )
+        self.style.configure(
+            "ReferenceCheck.TCheckbutton", background=p["panel"], foreground=p["muted"],
+            font=("Segoe UI", 9),
+        )
+        self.style.map("ReferenceCheck.TCheckbutton", background=[("active", p["panel"])])
+        button_styles = {
+            "ReferencePrimary.TButton": (p["teal"], "#FFFFFF", p["teal_hover"]),
+            "ReferenceNav.TButton": ("#FFFFFF", p["text"], "#EAF4F4"),
+            "ReferenceNavSelected.TButton": ("#E3F4F2", p["text"], "#D4ECE9"),
+            "ReferenceQuiet.TButton": ("#E5F3F2", p["header_deep"], "#D4ECE9"),
+            "ReferenceRun.TButton": (p["aqua"], p["header_deep"], "#76EBDD"),
+            "LivePill.TButton": ("#2A6670", "#F4FFFF", "#347983"),
+            "LiveReport.TButton": (p["aqua"], p["header_deep"], "#76EBDD"),
+        }
+        for name, (background, foreground, active) in button_styles.items():
+            self.style.configure(
+                name, background=background, foreground=foreground, borderwidth=0,
+                font=("Segoe UI Semibold", 9), padding=(14, 9),
+            )
+            self.style.map(
+                name,
+                background=[("active", active), ("disabled", "#D9E5E5")],
+                foreground=[("disabled", "#8BA0A3")],
+            )
+        self.style.configure(
+            "ReferenceProfile.TFrame", background="#FFFFFF", relief="solid", borderwidth=1,
+        )
+        self.style.configure(
+            "ReferenceProfileTitle.TLabel", background="#FFFFFF", foreground=p["text"],
+            font=("Segoe UI Semibold", 9),
+        )
+        self.style.configure(
+            "ReferenceProfileText.TLabel", background="#FFFFFF", foreground=p["muted"],
+            font=("Segoe UI", 8),
+        )
+        interface_styles = {
+            "Data": ("#E8FAF2", "#0D7A5B", p["green"]),
+            "Link": ("#FFF7E6", "#8B5A00", p["amber"]),
+            "Inactive": ("#F3F6F8", "#61737A", "#AAB8C2"),
+        }
+        for name, (background, foreground, accent) in interface_styles.items():
+            self.style.configure(f"ReferenceInterface{name}.TFrame", background=background)
+            self.style.configure(
+                f"ReferenceInterface{name}.TCheckbutton", background=background,
+                foreground=foreground, font=("Segoe UI", 9),
+            )
+            self.style.map(
+                f"ReferenceInterface{name}.TCheckbutton",
+                background=[("active", background)],
+            )
+            self.style.configure(
+                f"ReferenceInterface{name}Name.TLabel", background=background,
+                foreground=foreground, font=("Segoe UI Semibold", 9),
+            )
+            self.style.configure(
+                f"ReferenceInterface{name}Meta.TLabel", background=background,
+                foreground=foreground, font=("Segoe UI", 8),
+            )
+            self.style.configure(
+                f"ReferenceInterface{name}Dot.TLabel", background=background,
+                foreground=accent, font=("Segoe UI", 13),
+            )
+        self.style.configure(
+            "ReferenceCommandText.TLabel", background=p["header_deep"], foreground="#D8F4F1",
+            font=("Segoe UI Semibold", 8),
+        )
+        self.style.configure(
+            "LiveTitle.TLabel", background=p["header"], foreground="#FFFFFF",
+            font=("Segoe UI Semibold", 15),
+        )
+        self.style.configure(
+            "LiveStatus.TLabel", background=p["header"], foreground="#70F0B4",
+            font=("Segoe UI", 8),
+        )
+        self.style.configure(
+            "LivePanelTitle.TLabel", background=p["panel"], foreground=p["text"],
+            font=("Segoe UI Semibold", 10),
+        )
+        self.style.configure(
+            "LiveLegend.TLabel", background=p["panel"], foreground=p["muted"],
+            font=("Segoe UI", 8),
+        )
+        self.style.configure(
+            "Reference.Treeview", background="#FFFFFF", fieldbackground="#FFFFFF",
+            foreground=p["text"], borderwidth=0, rowheight=28,
+            font=("Cascadia Mono", 8),
+        )
+        self.style.configure(
+            "Reference.Treeview.Heading", background="#EAF3F5", foreground=p["text"],
+            borderwidth=0, font=("Segoe UI Semibold", 8), padding=(5, 6),
+        )
+        self.style.map("Reference.Treeview", background=[("selected", "#D9EBFF")])
+        self.style.configure(
+            "Reference.Horizontal.TProgressbar", troughcolor="#CBE0E1",
+            background=p["aqua"], bordercolor=p["header_deep"],
+            lightcolor=p["aqua"], darkcolor=p["aqua"], thickness=3,
+        )
+        security_styles = {
+            "Info": ("#EBFAF2", "#147A55", p["green"]),
+            "Medium": ("#FFF6E6", "#8A5700", p["amber"]),
+            "High": ("#FFECEE", "#A62831", p["red"]),
+        }
+        for name, (background, foreground, accent) in security_styles.items():
+            self.style.configure(f"LiveSecurity{name}.TFrame", background=background)
+            self.style.configure(
+                f"LiveSecurity{name}Title.TLabel", background=background,
+                foreground=foreground, font=("Segoe UI Semibold", 9),
+            )
+            self.style.configure(
+                f"LiveSecurity{name}Text.TLabel", background=background,
+                foreground=foreground, font=("Segoe UI", 8),
+            )
+            self.style.configure(
+                f"LiveSecurity{name}Dot.TLabel", background=background,
+                foreground=accent, font=("Segoe UI", 13),
+            )
+
+    def _build_reference_ui_v2(self) -> None:
+        self._ensure_network_state()
+        ctk.set_appearance_mode("light")
+        p = REFERENCE_COLORS
+        screen_width = max(1024, int(self.root.winfo_screenwidth()))
+        screen_height = max(720, int(self.root.winfo_screenheight()))
+        width = min(1320, max(960, screen_width - 200))
+        height = min(screen_height - 100, max(600, int(width / 1.76)))
+        self.root.geometry(f"{width}x{height}")
+        self.root.configure(background=p["canvas"])
+
+        shell = ctk.CTkFrame(self.root, fg_color=p["canvas"], corner_radius=0)
+        shell.pack(fill=BOTH, expand=True, padx=10, pady=10)
+        self.shell = shell
+
+        header = ctk.CTkFrame(shell, height=82, corner_radius=16, fg_color=p["header"])
+        header.pack(fill=X)
+        header.pack_propagate(False)
+        self.header = header
+        ctk.CTkLabel(
+            header, text="+", width=30, height=30, corner_radius=15,
+            fg_color=p["aqua"], text_color=p["header_deep"],
+            font=("Segoe UI Semibold", 19),
+        ).pack(side=LEFT, padx=(22, 10))
+        heading = ctk.CTkFrame(header, fg_color="transparent")
+        heading.pack(side=LEFT, fill=X, expand=True)
+        ctk.CTkLabel(
+            heading, text="IB Audit Workstation", text_color="#FFFFFF",
+            font=("Segoe UI Semibold", 17), anchor="w",
+        ).pack(anchor="w")
+        self.header_subtitle = ctk.CTkLabel(
+            heading, text="Локальный аудит безопасности Windows и сети",
+            text_color="#BFE9E5", font=("Segoe UI", 9), anchor="w",
+        )
+        self.header_subtitle.pack(anchor="w", pady=(0, 1))
+        self._reference_status_badge = ctk.CTkLabel(
+            header, textvariable=self.status, width=158, height=31, corner_radius=16,
+            fg_color="#286772", text_color="#F0FFFF", font=("Segoe UI Semibold", 9),
+        )
+        self._reference_status_badge.pack(side=RIGHT, padx=(12, 22))
+
+        body = ctk.CTkFrame(shell, fg_color="#FFFFFF", corner_radius=16)
+        body.pack(fill=BOTH, expand=True, pady=(12, 0))
+        self.body = body
+
+        rail = ctk.CTkFrame(body, width=228, corner_radius=14, fg_color=p["rail"])
+        rail.pack(side=LEFT, fill=Y, padx=(16, 14), pady=14)
+        rail.pack_propagate(False)
+        self.rail = rail
+        ctk.CTkLabel(
+            rail, text="ДЕЙСТВИЯ", text_color=p["muted"],
+            font=("Segoe UI Semibold", 8), anchor="w",
+        ).pack(fill=X, padx=16, pady=(16, 8))
+
+        def nav_button(text: str, command: object, selected: bool = False) -> ctk.CTkButton:
+            return ctk.CTkButton(
+                rail, text=text, command=command, height=39, corner_radius=9,
+                fg_color=p["teal"] if selected else "#FFFFFF",
+                hover_color=p["teal_hover"] if selected else "#E3F2F1",
+                text_color="#FFFFFF" if selected else p["text"],
+                border_width=0 if selected else 1, border_color=p["line"],
+                font=("Segoe UI Semibold", 9), anchor="w",
+            )
+
+        full_button = nav_button("Полный аудит", lambda: self._start(True), True)
+        full_button.pack(fill=X, padx=12, pady=4)
+        network_button = nav_button("Аудит сети", self._show_reference_network_page)
+        network_button.configure(fg_color="#E2F3F1", border_color="#B9DEDB")
+        network_button.pack(fill=X, padx=12, pady=4)
+        import_button = nav_button("Проверить HTML", self._choose_reports)
+        import_button.pack(fill=X, padx=12, pady=4)
+        update_button = nav_button("Обновить базы", self._update_sources)
+        update_button.pack(fill=X, padx=12, pady=4)
+        self.cancel_button = nav_button("Отменить", self._cancel_active)
+        self.cancel_button.configure(state="disabled")
+
+        separator = ctk.CTkFrame(rail, height=1, fg_color=p["line"], corner_radius=0)
+        separator.pack(fill=X, padx=14, pady=(20, 14))
+        ctk.CTkLabel(
+            rail, text="ПРОФИЛЬ", text_color=p["muted"],
+            font=("Segoe UI Semibold", 8), anchor="w",
+        ).pack(fill=X, padx=16, pady=(0, 8))
+        profile = ctk.CTkFrame(
+            rail, height=74, corner_radius=10, fg_color="#FFFFFF",
+            border_width=1, border_color=p["line"],
+        )
+        profile.pack(fill=X, padx=12)
+        profile.pack_propagate(False)
+        ctk.CTkLabel(
+            profile, text="Полная ИБ-проверка", text_color=p["text"],
+            font=("Segoe UI Semibold", 9), anchor="w",
+        ).pack(fill=X, padx=12, pady=(12, 2))
+        ctk.CTkLabel(
+            profile, text="Система · Сеть · Отчёт", text_color=p["muted"],
+            font=("Segoe UI", 8), anchor="w",
+        ).pack(fill=X, padx=12)
+        rail_footer = ctk.CTkFrame(rail, fg_color="transparent")
+        rail_footer.pack(side="bottom", fill=X, padx=16, pady=16)
+        self.rail_note = ctk.CTkLabel(
+            rail_footer, text="Все результаты сохраняются\nлокально на компьютере",
+            text_color=p["muted"], font=("Segoe UI", 8), justify="left", anchor="w",
+        )
+        self.rail_note.pack(fill=X)
+
+        workspace = ctk.CTkFrame(body, fg_color="transparent")
+        workspace.pack(side=RIGHT, fill=BOTH, expand=True, padx=(0, 16), pady=14)
+        self.workspace = workspace
+        ctk.CTkLabel(
+            workspace, text="Сетевая проверка", text_color=p["text"],
+            font=("Segoe UI Semibold", 16), anchor="w",
+        ).pack(fill=X)
+        ctk.CTkLabel(
+            workspace,
+            text="Безопасный локальный профиль. Внешний диапазон не выбирается автоматически.",
+            text_color=p["muted"], font=("Segoe UI", 9), anchor="w",
+        ).pack(fill=X, pady=(0, 10))
+
+        config_card = ctk.CTkFrame(
+            workspace, height=130, corner_radius=14, fg_color=p["panel"],
+            border_width=1, border_color=p["line"],
+        )
+        config_card.pack(fill=X, pady=(0, 10))
+        config_card.pack_propagate(False)
+        fields = ctk.CTkFrame(config_card, fg_color="transparent")
+        fields.pack(fill=X, padx=16, pady=(12, 6))
+        fields.grid_columnconfigure((0, 1), weight=1)
+        ctk.CTkLabel(
+            fields, text="ЦЕЛИ NMAP", text_color=p["text"],
+            font=("Segoe UI Semibold", 8), anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 10))
+        ctk.CTkLabel(
+            fields, text="ПОРТЫ", text_color=p["text"],
+            font=("Segoe UI Semibold", 8), anchor="w",
+        ).grid(row=0, column=1, sticky="ew", padx=(10, 0))
+        ctk.CTkEntry(
+            fields, textvariable=self.network_targets, height=34, corner_radius=7,
+            fg_color="#FFFFFF", border_color=p["line"], border_width=1,
+            text_color=p["text"], font=("Cascadia Mono", 9),
+        ).grid(row=1, column=0, sticky="ew", padx=(0, 10), pady=(4, 0))
+        ctk.CTkEntry(
+            fields, textvariable=self.network_ports, height=34, corner_radius=7,
+            fg_color="#FFFFFF", border_color=p["line"], border_width=1,
+            text_color=p["text"], font=("Cascadia Mono", 9),
+        ).grid(row=1, column=1, sticky="ew", padx=(10, 0), pady=(4, 0))
+        checks = ctk.CTkFrame(config_card, fg_color="transparent")
+        checks.pack(fill=X, padx=16, pady=(0, 10))
+        ctk.CTkCheckBox(
+            checks, text="Включить Nmap", variable=self.network_scan_enabled,
+            width=128, height=22, corner_radius=4, checkbox_width=16, checkbox_height=16,
+            fg_color=p["teal"], hover_color=p["teal_hover"], border_color=p["teal"],
+            text_color=p["muted"], font=("Segoe UI", 8),
+        ).pack(side=LEFT)
+        ctk.CTkCheckBox(
+            checks, text="Анализировать трафик", variable=self.network_capture_enabled,
+            width=168, height=22, corner_radius=4, checkbox_width=16, checkbox_height=16,
+            fg_color=p["teal"], hover_color=p["teal_hover"], border_color=p["teal"],
+            text_color=p["muted"], font=("Segoe UI", 8),
+        ).pack(side=LEFT, padx=(12, 0))
+        ctk.CTkButton(
+            checks, text="Профиль T3", command=self._open_network_commands,
+            width=108, height=27, corner_radius=14, fg_color="#E1F2F0",
+            hover_color="#D0EAE7", text_color=p["header_deep"],
+            font=("Segoe UI Semibold", 8),
+        ).pack(side=RIGHT)
+
+        interface_card = ctk.CTkFrame(
+            workspace, corner_radius=14, fg_color=p["panel"],
+            border_width=1, border_color=p["line"],
+        )
+        interface_card.pack(fill=BOTH, expand=True, pady=(0, 10))
+        interface_header = ctk.CTkFrame(interface_card, height=42, fg_color="transparent")
+        interface_header.pack(fill=X, padx=14, pady=(8, 0))
+        interface_header.pack_propagate(False)
+        ctk.CTkLabel(
+            interface_header, text="Сетевые интерфейсы", text_color=p["text"],
+            font=("Segoe UI Semibold", 10), anchor="w",
+        ).pack(side=LEFT)
+        ctk.CTkLabel(
+            interface_header, textvariable=self.network_capture_interface_summary,
+            text_color=p["muted"], font=("Segoe UI", 8),
+        ).pack(side=LEFT, padx=(12, 0))
+        ctk.CTkButton(
+            interface_header, text="Обновить список", command=self._load_network_capture_interfaces,
+            width=128, height=28, corner_radius=7, fg_color="#E1F2F0",
+            hover_color="#D0EAE7", text_color=p["header_deep"],
+            font=("Segoe UI Semibold", 8),
+        ).pack(side=RIGHT)
+        self._network_capture_interface_frame = interface_card
+        self._network_capture_interface_list_frame = ctk.CTkScrollableFrame(
+            interface_card, corner_radius=0, fg_color="transparent",
+            scrollbar_button_color="#A9C4C5", scrollbar_button_hover_color="#7DA7A8",
+        )
+        self._network_capture_interface_list_frame.pack(fill=BOTH, expand=True, padx=12, pady=(0, 10))
+        self._build_network_capture_interface_checkbox_panel()
+
+        command = ctk.CTkFrame(workspace, height=42, corner_radius=10, fg_color=p["header_deep"])
+        command.pack(fill=X)
+        command.pack_propagate(False)
+        self.progress_status_label = ctk.CTkLabel(
+            command, textvariable=self.progress_status, text_color="#D8F4F1",
+            font=("Segoe UI Semibold", 8), anchor="w",
+        )
+        self.progress_status_label.pack(side=LEFT, padx=(14, 8))
+        ctk.CTkLabel(
+            command, textvariable=self.network_capture_interface_summary,
+            text_color="#B8D8D6", font=("Segoe UI", 8),
+        ).pack(side=LEFT)
+        launch_button = ctk.CTkButton(
+            command, text="Запустить", command=lambda: self._start(True, network_only=True),
+            width=110, height=28, corner_radius=14, fg_color=p["aqua"],
+            hover_color="#76EBDD", text_color=p["header_deep"],
+            font=("Segoe UI Semibold", 8),
+        )
+        launch_button.pack(side=RIGHT, padx=12)
+        self.progress = ttk.Progressbar(
+            command, mode="determinate", maximum=100, value=0,
+            style="Reference.Horizontal.TProgressbar",
+        )
+        self.progress.place(relx=0, rely=1, relwidth=1, height=3, anchor="sw")
+
+        compatibility = ttk.Frame(self.root)
+        self.status_badge = ttk.Label(compatibility, textvariable=self.status, style="Ready.TLabel")
+        self.source_status_label = ttk.Label(compatibility, textvariable=self.source_status)
+        self.path_label = ttk.Label(compatibility, textvariable=self.output_dir)
+        self.log = scrolledtext.ScrolledText(compatibility, state="disabled", height=1)
+        self.footer = ttk.Frame(compatibility)
+        self.footer_credit = ttk.Label(self.footer, text=DEVELOPER_CREDIT)
+        self.action_buttons = [full_button, import_button, update_button, launch_button]
+        self.progress_status.set("Готово к проверке")
+        self._log("Рабочая станция готова. Выберите интерфейс и нажмите «Запустить».")
+
+    def _build_reference_ui(self) -> None:
+        self._ensure_network_state()
+        screen_width = max(1024, int(self.root.winfo_screenwidth()))
+        screen_height = max(720, int(self.root.winfo_screenheight()))
+        width = min(1320, max(960, screen_width - 200))
+        height = min(screen_height - 100, max(600, int(width / 1.76)))
+        self.root.geometry(f"{width}x{height}")
+        shell = ttk.Frame(self.root, style="ReferenceShell.TFrame", padding=(10, 10))
+        shell.pack(fill=BOTH, expand=True)
+        self.shell = shell
+
+        header = ttk.Frame(shell, style="ReferenceHeader.TFrame", padding=(22, 15))
+        header.pack(fill=X)
+        self.header = header
+        logo = Canvas(
+            header, width=30, height=30, background=REFERENCE_COLORS["header"],
+            highlightthickness=0,
+        )
+        logo.create_oval(2, 2, 28, 28, fill=REFERENCE_COLORS["aqua"], outline=REFERENCE_COLORS["aqua"])
+        logo.create_text(15, 14, text="+", fill=REFERENCE_COLORS["header_deep"], font=("Segoe UI Semibold", 17))
+        logo.pack(side=LEFT, padx=(0, 10))
+        heading = ttk.Frame(header, style="ReferenceHeader.TFrame")
+        heading.pack(side=LEFT, fill=X, expand=True)
+        ttk.Label(heading, text="IB Audit Workstation", style="ReferenceTitle.TLabel").pack(anchor="w")
+        self.header_subtitle = ttk.Label(
+            heading,
+            text="Локальный аудит безопасности Windows и сети",
+            style="ReferenceSubtitle.TLabel",
+        )
+        self.header_subtitle.pack(anchor="w", pady=(2, 0))
+        self.status_badge = ttk.Label(
+            header, textvariable=self.status, style="ReferenceSystem.TLabel",
+        )
+        self.status_badge.pack(side=RIGHT, padx=(18, 0))
+
+        body = ttk.Frame(shell, style="ReferenceWorkspace.TFrame", padding=(16, 14))
+        body.pack(fill=BOTH, expand=True)
+        self.body = body
+
+        rail = ttk.Frame(body, style="ReferenceRail.TFrame", width=230, padding=(16, 16))
+        rail.pack(side=LEFT, fill=Y, padx=(0, 16))
+        rail.pack_propagate(False)
+        self.rail = rail
+        ttk.Label(rail, text="ДЕЙСТВИЯ", style="ReferenceSection.TLabel").pack(anchor="w", pady=(0, 11))
+        full_button = ttk.Button(
+            rail, text="Полный аудит", command=lambda: self._start(True),
+            style="ReferencePrimary.TButton", cursor="hand2",
+        )
+        full_button.pack(fill=X, pady=(0, 8))
+        network_button = ttk.Button(
+            rail, text="Аудит сети", command=self._show_reference_network_page,
+            style="ReferenceNavSelected.TButton", cursor="hand2",
+        )
+        network_button.pack(fill=X, pady=(0, 8))
+        import_button = ttk.Button(
+            rail, text="Проверить HTML", command=self._choose_reports,
+            style="ReferenceNav.TButton", cursor="hand2",
+        )
+        import_button.pack(fill=X, pady=(0, 8))
+        update_button = ttk.Button(
+            rail, text="Обновить базы", command=self._update_sources,
+            style="ReferenceNav.TButton", cursor="hand2",
+        )
+        update_button.pack(fill=X)
+        self.cancel_button = ttk.Button(
+            rail, text="Отменить", command=self._cancel_active,
+            style="ReferenceNav.TButton", cursor="hand2", state="disabled",
+        )
+
+        ttk.Separator(rail, orient="horizontal").pack(fill=X, pady=22)
+        ttk.Label(rail, text="ПРОФИЛЬ", style="ReferenceSection.TLabel").pack(anchor="w", pady=(0, 10))
+        profile = ttk.Frame(rail, style="ReferenceProfile.TFrame", padding=(12, 12))
+        profile.pack(fill=X)
+        ttk.Label(profile, text="Полная ИБ-проверка", style="ReferenceProfileTitle.TLabel").pack(anchor="w")
+        ttk.Label(
+            profile, text="Система · Сеть · Отчёт", style="ReferenceProfileText.TLabel",
+        ).pack(anchor="w", pady=(6, 0))
+        rail_footer = ttk.Frame(rail, style="ReferenceRail.TFrame")
+        rail_footer.pack(side="bottom", fill=X)
+        self.rail_note = ttk.Label(
+            rail_footer,
+            text="Все результаты сохраняются\nлокально на компьютере",
+            style="ReferenceSection.TLabel",
+            justify="left",
+        )
+        self.rail_note.pack(anchor="w")
+
+        workspace = ttk.Frame(body, style="ReferenceWorkspace.TFrame")
+        workspace.pack(side=RIGHT, fill=BOTH, expand=True)
+        self.workspace = workspace
+        ttk.Label(workspace, text="Сетевая проверка", style="ReferenceHeading.TLabel").pack(anchor="w")
+        ttk.Label(
+            workspace,
+            text="Безопасный локальный профиль. Внешний диапазон не выбирается автоматически.",
+            style="ReferenceDescription.TLabel",
+        ).pack(anchor="w", pady=(3, 12))
+
+        config_card = ttk.Frame(
+            workspace, style="ReferenceCard.TFrame", padding=(16, 13),
+            relief="solid", borderwidth=1,
+        )
+        config_card.pack(fill=X, pady=(0, 12))
+        config_card.grid_columnconfigure(0, weight=1)
+        config_card.grid_columnconfigure(1, weight=1)
+        ttk.Label(config_card, text="ЦЕЛИ NMAP", style="ReferenceField.TLabel").grid(
+            row=0, column=0, sticky="w", padx=(0, 12),
+        )
+        ttk.Label(config_card, text="ПОРТЫ", style="ReferenceField.TLabel").grid(
+            row=0, column=1, sticky="w", padx=(12, 0),
+        )
+        ttk.Entry(
+            config_card, textvariable=self.network_targets, style="ReferenceEntry.TEntry",
+        ).grid(row=1, column=0, sticky="ew", padx=(0, 12), pady=(6, 9))
+        ttk.Entry(
+            config_card, textvariable=self.network_ports, style="ReferenceEntry.TEntry",
+        ).grid(row=1, column=1, sticky="ew", padx=(12, 0), pady=(6, 9))
+        checks = ttk.Frame(config_card, style="ReferenceCard.TFrame")
+        checks.grid(row=2, column=0, columnspan=2, sticky="ew")
+        ttk.Checkbutton(
+            checks, text="Включить Nmap", variable=self.network_scan_enabled,
+            style="ReferenceCheck.TCheckbutton",
+        ).pack(side=LEFT)
+        ttk.Checkbutton(
+            checks, text="Анализировать трафик", variable=self.network_capture_enabled,
+            style="ReferenceCheck.TCheckbutton",
+        ).pack(side=LEFT, padx=(18, 0))
+        ttk.Button(
+            checks, text="Профиль T3", command=self._open_network_commands,
+            style="ReferenceQuiet.TButton", cursor="hand2",
+        ).pack(side=RIGHT)
+
+        interface_card = ttk.Frame(
+            workspace, style="ReferenceCard.TFrame", padding=(16, 12),
+            relief="solid", borderwidth=1,
+        )
+        interface_card.pack(fill=BOTH, expand=True, pady=(0, 12))
+        interface_header = ttk.Frame(interface_card, style="ReferenceCard.TFrame")
+        interface_header.pack(fill=X, pady=(0, 8))
+        ttk.Label(
+            interface_header, text="Сетевые интерфейсы", style="ReferenceCardTitle.TLabel",
+        ).pack(side=LEFT)
+        ttk.Label(
+            interface_header, textvariable=self.network_capture_interface_summary,
+            style="ReferenceMuted.TLabel",
+        ).pack(side=LEFT, padx=(12, 0))
+        ttk.Button(
+            interface_header, text="Обновить список", command=self._load_network_capture_interfaces,
+            style="ReferenceQuiet.TButton", cursor="hand2",
+        ).pack(side=RIGHT)
+        self._network_capture_interface_frame = interface_card
+        self._build_network_capture_interface_scroll_area()
+        self._build_network_capture_interface_checkbox_panel()
+
+        command = ttk.Frame(workspace, style="ReferenceCommand.TFrame", padding=(14, 9))
+        command.pack(fill=X)
+        command_row = ttk.Frame(command, style="ReferenceCommand.TFrame")
+        command_row.pack(fill=X)
+        self.progress_status_label = ttk.Label(
+            command_row, textvariable=self.progress_status, style="ReferenceCommandText.TLabel",
+        )
+        self.progress_status_label.pack(side=LEFT)
+        ttk.Label(
+            command_row, textvariable=self.network_capture_interface_summary,
+            style="ReferenceCommandText.TLabel",
+        ).pack(side=LEFT, padx=(10, 0))
+        launch_button = ttk.Button(
+            command_row, text="Запустить", command=lambda: self._start(True, network_only=True),
+            style="ReferenceRun.TButton", cursor="hand2",
+        )
+        launch_button.pack(side=RIGHT)
+        self.progress = ttk.Progressbar(
+            command, mode="determinate", maximum=100, value=0,
+            style="Reference.Horizontal.TProgressbar",
+        )
+        self.progress.place(relx=0, rely=1, relwidth=1, height=3, anchor="sw")
+
+        compatibility = ttk.Frame(workspace, style="ReferenceWorkspace.TFrame")
+        self.source_status_label = ttk.Label(compatibility, textvariable=self.source_status)
+        self.path_label = ttk.Label(compatibility, textvariable=self.output_dir)
+        self.log = scrolledtext.ScrolledText(compatibility, state="disabled", height=1)
+        self.footer = ttk.Frame(shell, style="ReferenceShell.TFrame")
+        self.footer_credit = ttk.Label(self.footer, text=DEVELOPER_CREDIT)
+        self.action_buttons = [full_button, import_button, update_button, launch_button]
+        self.progress_status.set("Готово к проверке")
+        self._log("Рабочая станция готова. Выберите интерфейс и нажмите «Запустить».")
+
+    def _show_reference_network_page(self) -> None:
+        self.status.set("Система готова")
+        self.progress_status.set("Готово к сетевой проверке")
+
     def _build(self) -> None:
+        if getattr(self, "_use_reference_ui", False):
+            return self._build_reference_ui_v2()
         self._ensure_network_state()
         shell = ttk.Frame(self.root, style="App.TFrame")
         shell.pack(fill=BOTH, expand=True)
@@ -984,14 +1604,22 @@ class AuditWindow:
                 self._network_live_status = _FallbackVar("Ожидание запуска")
         if not hasattr(self, "_network_live_report_button"):
             self._network_live_report_button = None
-        self._network_live_packet_table = None
-        self._network_live_packet_details_text = None
-        self._network_live_packet_hex_text = None
-        self._network_live_packet_detail_cache = {}
-        self._network_live_nodes_table = None
-        self._network_live_nmap_text = None
-        self._network_live_security_text = None
-        self._network_live_log_text = None
+        if not hasattr(self, "_network_live_packet_table"):
+            self._network_live_packet_table = None
+        if not hasattr(self, "_network_live_packet_details_text"):
+            self._network_live_packet_details_text = None
+        if not hasattr(self, "_network_live_packet_hex_text"):
+            self._network_live_packet_hex_text = None
+        if not hasattr(self, "_network_live_packet_detail_cache"):
+            self._network_live_packet_detail_cache = {}
+        if not hasattr(self, "_network_live_nodes_table"):
+            self._network_live_nodes_table = None
+        if not hasattr(self, "_network_live_nmap_text"):
+            self._network_live_nmap_text = None
+        if not hasattr(self, "_network_live_security_text"):
+            self._network_live_security_text = None
+        if not hasattr(self, "_network_live_log_text"):
+            self._network_live_log_text = None
         self._network_live_summary_vars = {}
 
     def _build_network_capture_interface_scroll_area(self) -> None:
@@ -1083,8 +1711,8 @@ class AuditWindow:
 
     def _network_interface_id(self, candidate: dict[str, str]) -> str:
         return (
-            (candidate.get("name") or "").strip()
-            or (candidate.get("index") or "").strip()
+            (candidate.get("index") or "").strip()
+            or (candidate.get("name") or "").strip()
             or (candidate.get("description") or "").strip()
         )
 
@@ -1145,7 +1773,218 @@ class AuditWindow:
         else:
             self.network_capture_interface_summary.set("Не выбрано (захват отключён)")
 
+    def _reference_interface_traffic_text(self, candidate: dict[str, str]) -> str:
+        value = self._network_capture_interface_traffic_text(candidate)
+        rx_match = re.search(r"RX\s*[=:]\s*(\d+)", value, re.IGNORECASE)
+        tx_match = re.search(r"TX\s*[=:]\s*(\d+)", value, re.IGNORECASE)
+        if not rx_match and not tx_match:
+            return value or "неактивен"
+
+        def human_size(raw: str | None) -> str:
+            amount = float(raw or 0)
+            if amount >= 1_000_000_000:
+                return f"{amount / 1_000_000_000:.1f} GB"
+            if amount >= 1_000_000:
+                return f"{amount / 1_000_000:.1f} MB"
+            if amount >= 1_000:
+                return f"{amount / 1_000:.1f} KB"
+            return f"{int(amount)} B"
+
+        return f"RX {human_size(rx_match.group(1) if rx_match else None)} · TX {human_size(tx_match.group(1) if tx_match else None)}"
+
+    def _build_reference_network_interface_panel_v2(self) -> None:
+        self._ensure_network_state()
+        frame = self._network_capture_interface_list_frame or self._network_capture_interface_frame
+        if frame is None:
+            return
+        for child in list(frame.winfo_children()):
+            child.destroy()
+        if not self.network_capture_interfaces:
+            ctk.CTkLabel(
+                frame,
+                text="Интерфейсы загружаются. Если список пуст, нажмите «Обновить список».",
+                text_color=REFERENCE_COLORS["muted"], font=("Segoe UI", 8), anchor="w",
+            ).pack(fill=X, padx=4, pady=8)
+            self.network_capture_interface_summary.set("поиск интерфейсов")
+            return
+        selected_tokens = {token.lower() for token in self._network_interface_tokens("network_capture_interface")}
+        disabled = {token.lower() for token in self._network_interface_tokens("network_capture_excluded_interfaces")}
+        if not selected_tokens:
+            for candidate in self.network_capture_interfaces:
+                token = self._network_interface_id(candidate)
+                if (
+                    token
+                    and token.lower() not in disabled
+                    and self._network_capture_interface_tone(candidate) == "Traffic"
+                ):
+                    selected_tokens.add(token.lower())
+                    self.network_capture_interface.set(token)
+                    break
+        row_palette = {
+            "Data": ("#E8FAF2", "#A9E6C7", "#0D7A5B", REFERENCE_COLORS["green"]),
+            "Link": ("#FFF7E6", "#F0D79B", "#8B5A00", REFERENCE_COLORS["amber"]),
+            "Inactive": ("#F3F6F8", "#DEE6EA", "#61737A", "#AAB8C2"),
+        }
+        new_vars: dict[str, BooleanVar] = {}
+        for candidate in self.network_capture_interfaces:
+            token = self._network_interface_id(candidate)
+            if not token:
+                continue
+            key = token.lower()
+            variable = self._capture_interface_checkbox_vars.get(key)
+            if variable is None:
+                variable = BooleanVar(value=key in selected_tokens and key not in disabled)
+            tone = self._network_capture_interface_tone(candidate)
+            reference_tone = "Data" if tone == "Traffic" else "Link" if tone in {"Active", "Quiet"} else "Inactive"
+            background, border, foreground, accent = row_palette[reference_tone]
+            row = ctk.CTkFrame(
+                frame, height=52, corner_radius=9, fg_color=background,
+                border_width=1, border_color=border,
+            )
+            row.pack(fill=X, pady=3, padx=2)
+            row.pack_propagate(False)
+            ctk.CTkCheckBox(
+                row, text="", variable=variable, width=22, height=22,
+                checkbox_width=16, checkbox_height=16, corner_radius=4,
+                fg_color=REFERENCE_COLORS["teal"], hover_color=REFERENCE_COLORS["teal_hover"],
+                border_color=foreground,
+            ).pack(side=LEFT, padx=(10, 3))
+            ctk.CTkLabel(
+                row, text="●", width=16, text_color=accent,
+                font=("Segoe UI", 12),
+            ).pack(side=LEFT, padx=(0, 7))
+            info = ctk.CTkFrame(row, fg_color="transparent")
+            info.pack(side=LEFT, fill=X, expand=True)
+            name = str(
+                candidate.get("friendly_name")
+                or candidate.get("Friendly Name")
+                or candidate.get("name")
+                or candidate.get("Name")
+                or candidate.get("description")
+                or candidate.get("Description")
+                or token
+            )
+            ctk.CTkLabel(
+                info, text=name, text_color=foreground,
+                font=("Segoe UI Semibold", 9), anchor="w",
+            ).pack(fill=X, pady=(7, 0))
+            status_text = self._network_capture_interface_status_text(candidate)
+            kind_text = self._network_capture_interface_kind_text(candidate)
+            ctk.CTkLabel(
+                info, text=f"{status_text} · {kind_text}", text_color=foreground,
+                font=("Segoe UI", 8), anchor="w",
+            ).pack(fill=X, pady=(0, 5))
+            ctk.CTkLabel(
+                row, text=self._reference_interface_traffic_text(candidate),
+                text_color=foreground, font=("Cascadia Mono", 8), anchor="e",
+            ).pack(side=RIGHT, padx=(10, 12))
+            _Tooltip(row, self._network_capture_interface_tooltip(candidate))
+            if hasattr(variable, "trace_add"):
+                variable.trace_add("write", lambda *_args: self._update_capture_interface_summary())
+            new_vars[key] = variable
+            if key in disabled:
+                variable.set(False)
+        self._capture_interface_checkbox_vars = new_vars
+        self._update_capture_interface_summary()
+
+    def _build_reference_network_interface_panel(self) -> None:
+        self._ensure_network_state()
+        frame = self._network_capture_interface_list_frame or self._network_capture_interface_frame
+        if frame is None:
+            return
+        children = list(frame.winfo_children()) if hasattr(frame, "winfo_children") else list(getattr(frame, "children", []))
+        for child in children:
+            if hasattr(child, "destroy"):
+                child.destroy()
+        if hasattr(frame, "children"):
+            try:
+                frame.children.clear()
+            except Exception:
+                pass
+        if not self.network_capture_interfaces:
+            ttk.Label(
+                frame,
+                text="Интерфейсы загружаются. Если список пуст, нажмите «Обновить список».",
+                style="ReferenceMuted.TLabel",
+            ).pack(anchor="w", padx=4, pady=8)
+            self.network_capture_interface_summary.set("поиск интерфейсов")
+            self._refresh_network_capture_scroll_region()
+            return
+        selected_tokens = {token.lower() for token in self._network_interface_tokens("network_capture_interface")}
+        disabled = {token.lower() for token in self._network_interface_tokens("network_capture_excluded_interfaces")}
+        if not selected_tokens:
+            for candidate in self.network_capture_interfaces:
+                token = self._network_interface_id(candidate)
+                if (
+                    token
+                    and token.lower() not in disabled
+                    and self._network_capture_interface_tone(candidate) == "Traffic"
+                ):
+                    selected_tokens.add(token.lower())
+                    self.network_capture_interface.set(token)
+                    break
+        new_vars: dict[str, BooleanVar] = {}
+        for candidate in self.network_capture_interfaces:
+            token = self._network_interface_id(candidate)
+            if not token:
+                continue
+            key = token.lower()
+            variable = self._capture_interface_checkbox_vars.get(key)
+            if variable is None:
+                variable = BooleanVar(value=key in selected_tokens and key not in disabled)
+            tone = self._network_capture_interface_tone(candidate)
+            reference_tone = "Data" if tone == "Traffic" else "Link" if tone in {"Active", "Quiet"} else "Inactive"
+            background_style = f"ReferenceInterface{reference_tone}.TFrame"
+            row = ttk.Frame(frame, style=background_style, padding=(10, 7))
+            row.pack(fill=X, pady=3, padx=2)
+            ttk.Checkbutton(
+                row, variable=variable, style=f"ReferenceInterface{reference_tone}.TCheckbutton",
+            ).pack(side=LEFT, padx=(0, 5))
+            ttk.Label(
+                row, text="●", style=f"ReferenceInterface{reference_tone}Dot.TLabel",
+            ).pack(side=LEFT, padx=(0, 8))
+            info = ttk.Frame(row, style=background_style)
+            info.pack(side=LEFT, fill=X, expand=True)
+            name = str(
+                candidate.get("friendly_name")
+                or candidate.get("Friendly Name")
+                or candidate.get("name")
+                or candidate.get("Name")
+                or candidate.get("description")
+                or candidate.get("Description")
+                or token
+            )
+            ttk.Label(
+                info, text=name, style=f"ReferenceInterface{reference_tone}Name.TLabel",
+            ).pack(anchor="w")
+            status_text = self._network_capture_interface_status_text(candidate)
+            kind_text = self._network_capture_interface_kind_text(candidate)
+            ttk.Label(
+                info, text=f"{status_text} · {kind_text}",
+                style=f"ReferenceInterface{reference_tone}Meta.TLabel",
+            ).pack(anchor="w", pady=(2, 0))
+            traffic_text = self._reference_interface_traffic_text(candidate)
+            ttk.Label(
+                row, text=traffic_text or "неактивен",
+                style=f"ReferenceInterface{reference_tone}Meta.TLabel",
+            ).pack(side=RIGHT, padx=(12, 4))
+            tooltip_text = self._network_capture_interface_tooltip(candidate)
+            _Tooltip(row, tooltip_text)
+            if hasattr(variable, "trace_add"):
+                variable.trace_add("write", lambda *_args: self._update_capture_interface_summary())
+            new_vars[key] = variable
+            if key in disabled:
+                try:
+                    variable.set(False)
+                except Exception:
+                    pass
+        self._capture_interface_checkbox_vars = new_vars
+        self._update_capture_interface_summary()
+        self._refresh_network_capture_scroll_region()
+
     def _build_network_capture_interface_checkbox_panel(self) -> None:
+        if getattr(self, "_use_reference_ui", False):
+            return self._build_reference_network_interface_panel_v2()
         self._ensure_network_state()
         frame = self._network_capture_interface_list_frame or self._network_capture_interface_frame
         if frame is None:
@@ -1581,6 +2420,8 @@ class AuditWindow:
         )
 
     def _start_network_scan_live_window(self, network_scan: NetworkScanConfig, network_only: bool) -> None:
+        if getattr(self, "_use_reference_ui", False):
+            return self._start_network_scan_live_window_v4(network_scan, network_only)
         return self._start_network_scan_live_window_v2(network_scan, network_only)
 
     def _start_network_scan_live_window_legacy(self, network_scan: NetworkScanConfig, network_only: bool) -> None:
@@ -1675,6 +2516,558 @@ class AuditWindow:
         self._network_live_status.set("Запуск сетевого аудита…")
         self._render_network_scan_live_dashboard("Сканирование запущено")
         self._append_network_scan_event("Сетевой мониторинг активирован")
+
+    def _apply_readme_live_theme(self) -> None:
+        """Apply the README visual system after all live-monitor widgets exist."""
+        style = ttk.Style(self.root)
+        style.configure(
+            "Readme.Treeview",
+            background=COLORS["panel"],
+            fieldbackground=COLORS["panel"],
+            foreground=COLORS["text"],
+            bordercolor=COLORS["border"],
+            rowheight=28,
+            font=("Segoe UI", 10),
+        )
+        style.configure(
+            "Readme.Treeview.Heading",
+            background="#EDF4F4",
+            foreground="#40575F",
+            bordercolor=COLORS["border"],
+            relief="flat",
+            font=("Segoe UI Semibold", 10),
+        )
+        style.map(
+            "Readme.Treeview",
+            background=[("selected", "#D8F4EF")],
+            foreground=[("selected", COLORS["header"])],
+        )
+        for table in (
+            self._network_live_packet_table,
+            self._network_live_nodes_table,
+        ):
+            if table is not None:
+                try:
+                    table.configure(style="Readme.Treeview")
+                except Exception:
+                    pass
+        if self._network_live_canvas is not None:
+            try:
+                self._network_live_canvas.configure(
+                    background=COLORS["surface_soft"],
+                    highlightbackground=COLORS["border"],
+                    highlightthickness=1,
+                )
+            except Exception:
+                pass
+        text_widgets = (
+            self._network_live_packet_details_text,
+            self._network_live_packet_hex_text,
+            self._network_live_security_text,
+            self._network_live_log_text,
+        )
+        for widget in text_widgets:
+            if widget is not None:
+                try:
+                    widget.configure(
+                        background="#FBFDFD",
+                        foreground=COLORS["text"],
+                        insertbackground=COLORS["text"],
+                        selectbackground="#BFE3DF",
+                        selectforeground=COLORS["header"],
+                        relief="flat",
+                        borderwidth=0,
+                        font=("Cascadia Mono", 9),
+                    )
+                except Exception:
+                    pass
+        if self._network_live_nmap_text is not None:
+            try:
+                self._network_live_nmap_text.configure(
+                    background=COLORS["console"],
+                    foreground="#8FD5FF",
+                    insertbackground="#FFFFFF",
+                    selectbackground="#1D4F63",
+                    selectforeground="#FFFFFF",
+                    relief="flat",
+                    borderwidth=0,
+                    font=("Cascadia Mono", 9),
+                )
+            except Exception:
+                pass
+
+    def _network_port_count_label(self, ports: str) -> str:
+        total = 0
+        for item in str(ports or "").split(","):
+            value = item.strip()
+            if not value:
+                continue
+            if "-" in value:
+                start, end = value.split("-", 1)
+                try:
+                    total += max(0, int(end) - int(start) + 1)
+                except ValueError:
+                    total += 1
+            else:
+                total += 1
+        return f"{total or 0} портов"
+
+    def _start_network_scan_live_window_v4(self, network_scan: NetworkScanConfig, network_only: bool) -> None:
+        if self._network_live_window:
+            self._close_network_scan_live_window()
+        p = REFERENCE_COLORS
+        window = ctk.CTkToplevel(self.root)
+        window.title("Сетевой монитор: пакеты + Nmap")
+        screen_width = max(1024, int(window.winfo_screenwidth()))
+        screen_height = max(720, int(window.winfo_screenheight()))
+        width = min(1480, max(1080, screen_width - 100))
+        height = min(900, max(680, screen_height - 120))
+        x = max(0, (screen_width - width) // 2)
+        y = max(0, (screen_height - height) // 2)
+        window.geometry(f"{width}x{height}+{x}+{y}")
+        window.minsize(980, 620)
+        window.transient(self.root)
+        window.protocol("WM_DELETE_WINDOW", self._close_network_scan_live_window)
+        window.configure(fg_color=p["canvas"])
+        self._network_live_window = window
+        self._reference_live_ui = True
+        self._reference_live_ui_version = 4
+        self._network_live_text = None
+        self._network_live_canvas = None
+        self._network_live_packet_table = None
+        self._network_live_packet_details_text = None
+        self._network_live_packet_hex_text = None
+        self._network_live_packet_detail_cache = {}
+        self._network_live_nodes_table = None
+        self._network_live_nmap_text = None
+        self._network_live_security_text = None
+        self._network_live_log_text = None
+        self._network_live_capture_banner = None
+        self._network_live_security_frame = None
+        self._network_live_security_canvas = None
+        self._network_topology_nodes = set()
+        self._network_live_capture_summary = StringVar(value="● Подготовка сетевого мониторинга")
+        self._network_live_interfaces_label = ", ".join(network_scan.capture_interfaces) or "автовыбор"
+        targets_text = "Локальные цели" if network_scan.targets else "Автоподбор целей"
+        self._network_live_summary_vars = {
+            "targets": StringVar(value=targets_text),
+            "packets": StringVar(value="0"),
+            "risks": StringVar(value="0"),
+            "capture": StringVar(value="безопасный"),
+        }
+        self._network_live_events = [
+            "Режим: " + ("только сеть" if network_only else "полный аудит"),
+            "Цели: " + (", ".join(network_scan.targets) or "автоподбор"),
+            "Порты Nmap: " + ((network_scan.ports or "локальный профиль") if network_scan.nmap_enabled else "выключен"),
+            "Захват трафика: " + ("включен" if network_scan.capture_enabled else "выключен"),
+        ]
+        if network_scan.capture_enabled and network_scan.capture_interfaces:
+            self._network_live_events.append("Интерфейсы: " + ", ".join(network_scan.capture_interfaces))
+
+        header = ctk.CTkFrame(window, height=64, corner_radius=0, fg_color=p["header"])
+        header.pack(fill=X)
+        header.pack_propagate(False)
+        heading = ctk.CTkFrame(header, fg_color="transparent")
+        heading.pack(side=LEFT, fill=X, expand=True, padx=(18, 8))
+        ctk.CTkLabel(
+            heading, text="Сетевой монитор: пакеты + Nmap", text_color="#FFFFFF",
+            font=("Segoe UI Semibold", 15), anchor="w",
+        ).pack(anchor="w", pady=(7, 0))
+        ctk.CTkLabel(
+            heading, textvariable=self._network_live_capture_summary,
+            text_color="#70F0B4", font=("Segoe UI", 8), anchor="w",
+        ).pack(anchor="w")
+        self._network_live_report_button = ctk.CTkButton(
+            header, text="Открыть отчёт", state="disabled", command=self._open_network_live_report,
+            width=126, height=32, corner_radius=8, fg_color=p["aqua"],
+            hover_color="#76EBDD", text_color=p["header_deep"],
+            font=("Segoe UI Semibold", 8),
+        )
+        self._network_live_report_button.pack(side=RIGHT, padx=(6, 16))
+        for text, width_value in (
+            (str(getattr(network_scan, "nmap_timing", "T3") or "T3"), 68),
+            (self._network_port_count_label(network_scan.ports or ""), 98),
+            (targets_text, 118),
+        ):
+            ctk.CTkButton(
+                header, text=text, width=width_value, height=28, corner_radius=14,
+                fg_color="#2A6670", hover_color="#347983", text_color="#F4FFFF",
+                font=("Segoe UI Semibold", 8),
+            ).pack(side=RIGHT, padx=4)
+
+        body = ctk.CTkFrame(window, fg_color=p["canvas"], corner_radius=0)
+        body.pack(fill=BOTH, expand=True, padx=12, pady=12)
+        body.grid_columnconfigure(0, weight=3, uniform="live-columns")
+        body.grid_columnconfigure(1, weight=2, uniform="live-columns")
+        body.grid_rowconfigure(0, weight=1, uniform="live-rows")
+        body.grid_rowconfigure(1, weight=1, uniform="live-rows")
+
+        packet_panel = ctk.CTkFrame(
+            body, corner_radius=12, fg_color=p["panel"],
+            border_width=1, border_color=p["line"],
+        )
+        packet_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 6), pady=(0, 6))
+        packet_panel.grid_rowconfigure(1, weight=1)
+        packet_panel.grid_columnconfigure(0, weight=1)
+        packet_header = ctk.CTkFrame(packet_panel, height=36, fg_color="transparent")
+        packet_header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(6, 0))
+        ctk.CTkLabel(
+            packet_header, text="Пакеты и трафик", text_color=p["text"],
+            font=("Segoe UI Semibold", 10), anchor="w",
+        ).pack(side=LEFT)
+        ctk.CTkLabel(
+            packet_header, text="цвет = протокол", text_color=p["muted"],
+            font=("Segoe UI", 8),
+        ).pack(side=RIGHT)
+        packet_columns = ("number", "time", "source", "destination", "protocol", "length", "info")
+        packet_table = ttk.Treeview(
+            packet_panel, columns=packet_columns, show="headings", height=9,
+            style="Reference.Treeview",
+        )
+        headings = {
+            "number": "№", "time": "Время", "source": "Источник",
+            "destination": "Назначение", "protocol": "Протокол",
+            "length": "Длина", "info": "Описание",
+        }
+        widths = {"number": 45, "time": 72, "source": 130, "destination": 130, "protocol": 80, "length": 60, "info": 260}
+        for column in packet_columns:
+            packet_table.heading(column, text=headings[column])
+            packet_table.column(column, width=widths[column], minwidth=45, stretch=(column == "info"))
+        packet_tags = {
+            "critical": ("#FFE2E4", "#8B1E28"), "high": ("#FFECEE", "#A62831"),
+            "medium": ("#FFF2D8", "#8A5700"), "low": ("#EAF8EE", "#176B45"),
+            "info": ("#F4F7F8", p["text"]), "proto_tcp": ("#E7F0FF", "#174EA6"),
+            "proto_tls": ("#E6F8EE", "#166534"), "proto_dns": ("#FFF2D8", "#8A5700"),
+            "proto_icmp": ("#F0E9FF", "#6741A5"), "proto_arp": ("#EEF2F4", "#4E626A"),
+            "proto_http": ("#E2F7F5", "#0A746C"), "proto_udp": ("#E8F7FF", "#0E6D95"),
+        }
+        for tag, (background, foreground) in packet_tags.items():
+            packet_table.tag_configure(tag, background=background, foreground=foreground)
+        packet_scroll = ctk.CTkScrollbar(
+            packet_panel, orientation="vertical", command=packet_table.yview,
+            width=10, button_color="#A9C4C5", button_hover_color="#7DA7A8",
+        )
+        packet_table.configure(yscrollcommand=packet_scroll.set)
+        packet_table.grid(row=1, column=0, sticky="nsew", padx=(12, 2))
+        packet_scroll.grid(row=1, column=1, sticky="ns", padx=(0, 8))
+        ctk.CTkLabel(
+            packet_panel, text="Двойной щелчок открывает детали и hex пакета",
+            text_color=p["muted"], font=("Segoe UI", 8), anchor="w",
+        ).grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(4, 8))
+        packet_table.bind("<<TreeviewSelect>>", lambda _event: self._network_live_show_selected_packet_detail())
+        packet_table.bind("<Double-1>", lambda _event: self._open_reference_packet_detail())
+        self._network_live_packet_table = packet_table
+
+        nmap_panel = ctk.CTkFrame(
+            body, corner_radius=12, fg_color=p["navy"],
+            border_width=1, border_color="#24415F",
+        )
+        nmap_panel.grid(row=0, column=1, sticky="nsew", padx=(6, 0), pady=(0, 6))
+        nmap_panel.grid_rowconfigure(1, weight=1)
+        nmap_panel.grid_columnconfigure(0, weight=1)
+        nmap_header = ctk.CTkFrame(nmap_panel, height=36, fg_color="transparent")
+        nmap_header.grid(row=0, column=0, sticky="ew", padx=12, pady=(6, 0))
+        ctk.CTkLabel(
+            nmap_header, text="Nmap: узлы, порты, сервисы", text_color="#FFFFFF",
+            font=("Segoe UI Semibold", 10), anchor="w",
+        ).pack(side=LEFT)
+        ctk.CTkLabel(
+            nmap_header, text="●", width=16, text_color=p["green"],
+            font=("Segoe UI", 13),
+        ).pack(side=RIGHT)
+        self._network_live_nmap_text = scrolledtext.ScrolledText(
+            nmap_panel, wrap="word", font=("Cascadia Mono", 9),
+            background=p["navy"], foreground="#BCE6FF", insertbackground="#FFFFFF",
+            relief="flat", borderwidth=0, padx=6, pady=5, state="disabled",
+        )
+        self._network_live_nmap_text.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+
+        topology_panel = ctk.CTkFrame(
+            body, corner_radius=12, fg_color=p["panel"],
+            border_width=1, border_color=p["line"],
+        )
+        topology_panel.grid(row=1, column=0, sticky="nsew", padx=(0, 6), pady=(6, 0))
+        topology_panel.grid_rowconfigure(1, weight=1)
+        topology_panel.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            topology_panel, text="Схема сети и узлы", text_color=p["text"],
+            font=("Segoe UI Semibold", 10), anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=12, pady=(9, 2))
+        self._network_live_canvas = Canvas(
+            topology_panel, bg=p["panel"], highlightthickness=0, height=220,
+        )
+        self._network_live_canvas.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        self._network_live_canvas.bind("<Configure>", lambda _event: self._render_network_scan_live_topology())
+
+        security_panel = ctk.CTkFrame(
+            body, corner_radius=12, fg_color=p["panel"],
+            border_width=1, border_color="#F0DDB8",
+        )
+        security_panel.grid(row=1, column=1, sticky="nsew", padx=(6, 0), pady=(6, 0))
+        security_panel.grid_rowconfigure(1, weight=1)
+        security_panel.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            security_panel, text="ИБ-анализ", text_color=p["text"],
+            font=("Segoe UI Semibold", 10), anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=12, pady=(9, 2))
+        security_list = ctk.CTkScrollableFrame(
+            security_panel, corner_radius=0, fg_color="transparent",
+            scrollbar_button_color="#D5B978", scrollbar_button_hover_color="#B99950",
+        )
+        security_list.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        self._network_live_security_frame = security_list
+        self._network_live_security_canvas = None
+
+        for tag, options in {
+            "risk_critical": {"foreground": "#FF8D96"},
+            "risk_high": {"foreground": "#FF9CA3"},
+            "risk_medium": {"foreground": "#FFD072"},
+            "risk_low": {"foreground": "#74E0A5"},
+            "risk_info": {"foreground": "#BCE6FF"},
+            "phase": {"foreground": "#75B9FF"},
+            "packet": {"foreground": "#61E4D4"},
+        }.items():
+            self._network_live_nmap_text.tag_configure(tag, **options)
+
+        self._network_live_status.set("Запуск сетевого аудита...")
+        self._render_network_scan_live_dashboard("Сканирование запущено")
+        self._append_network_scan_event("Сетевой мониторинг активирован")
+        self._append_network_scan_event(
+            "Nmap: ожидание запуска локального сетевого сканера"
+            if network_scan.nmap_enabled else "Nmap: отключён пользователем"
+        )
+        if network_scan.capture_enabled:
+            self._append_network_scan_event(
+                "CAPTURE_ACTIVE|info|Захват трафика выполняется: "
+                f"интерфейсы={self._network_live_interfaces_label}; "
+                f"длительность={network_scan.capture_duration} сек"
+            )
+        else:
+            self._append_network_scan_event("Traffic: захват отключён пользователем")
+
+    def _start_network_scan_live_window_v3(self, network_scan: NetworkScanConfig, network_only: bool) -> None:
+        if self._network_live_window:
+            self._close_network_scan_live_window()
+        window = Toplevel(self.root)
+        window.title("Сетевой монитор: пакеты + Nmap")
+        screen_width = max(1024, int(window.winfo_screenwidth()))
+        screen_height = max(720, int(window.winfo_screenheight()))
+        width = min(1480, max(1080, screen_width - 100))
+        height = min(900, max(680, screen_height - 120))
+        x = max(0, (screen_width - width) // 2)
+        y = max(0, (screen_height - height) // 2)
+        window.geometry(f"{width}x{height}+{x}+{y}")
+        window.minsize(980, 620)
+        window.transient(self.root)
+        window.protocol("WM_DELETE_WINDOW", self._close_network_scan_live_window)
+        window.configure(background=REFERENCE_COLORS["canvas"])
+        self._network_live_window = window
+        self._reference_live_ui = True
+        self._network_live_text = None
+        self._network_live_canvas = None
+        self._network_live_packet_table = None
+        self._network_live_packet_details_text = None
+        self._network_live_packet_hex_text = None
+        self._network_live_packet_detail_cache = {}
+        self._network_live_nodes_table = None
+        self._network_live_nmap_text = None
+        self._network_live_security_text = None
+        self._network_live_log_text = None
+        self._network_live_capture_banner = None
+        self._network_live_security_frame = None
+        self._network_live_security_canvas = None
+        self._network_topology_nodes = set()
+        self._network_live_capture_summary = StringVar(value="● Подготовка сетевого мониторинга")
+        self._network_live_interfaces_label = ", ".join(network_scan.capture_interfaces) or "автовыбор"
+        targets_text = "Локальные цели" if network_scan.targets else "Автоподбор целей"
+        self._network_live_summary_vars = {
+            "targets": StringVar(value=targets_text),
+            "packets": StringVar(value="0"),
+            "risks": StringVar(value="0"),
+            "capture": StringVar(value="безопасный"),
+        }
+        self._network_live_events = [
+            "Режим: " + ("только сеть" if network_only else "полный аудит"),
+            "Цели: " + (", ".join(network_scan.targets) or "автоподбор"),
+            "Порты Nmap: " + ((network_scan.ports or "локальный профиль") if network_scan.nmap_enabled else "выключен"),
+            "Захват трафика: " + ("включен" if network_scan.capture_enabled else "выключен"),
+        ]
+        if network_scan.capture_enabled and network_scan.capture_interfaces:
+            self._network_live_events.append("Интерфейсы: " + ", ".join(network_scan.capture_interfaces))
+
+        header = ttk.Frame(window, style="LiveHeader.TFrame", padding=(18, 11))
+        header.pack(fill=X)
+        heading = ttk.Frame(header, style="LiveHeader.TFrame")
+        heading.pack(side=LEFT, fill=X, expand=True)
+        ttk.Label(heading, text="Сетевой монитор: пакеты + Nmap", style="LiveTitle.TLabel").pack(anchor="w")
+        ttk.Label(
+            heading, textvariable=self._network_live_capture_summary, style="LiveStatus.TLabel",
+        ).pack(anchor="w", pady=(3, 0))
+        self._network_live_report_button = ttk.Button(
+            header, text="Открыть отчёт", state="disabled", command=self._open_network_live_report,
+            style="LiveReport.TButton", cursor="hand2",
+        )
+        self._network_live_report_button.pack(side=RIGHT, padx=(10, 0))
+        ttk.Button(
+            header, text=str(getattr(network_scan, "nmap_timing", "T3") or "T3"),
+            style="LivePill.TButton",
+        ).pack(side=RIGHT, padx=4)
+        ttk.Button(
+            header, text=self._network_port_count_label(network_scan.ports or ""),
+            style="LivePill.TButton",
+        ).pack(side=RIGHT, padx=4)
+        ttk.Button(
+            header, text=targets_text, style="LivePill.TButton",
+        ).pack(side=RIGHT, padx=4)
+
+        body = ttk.Frame(window, style="LiveBody.TFrame", padding=(14, 12))
+        body.pack(fill=BOTH, expand=True)
+        body.grid_columnconfigure(0, weight=3, uniform="live-columns")
+        body.grid_columnconfigure(1, weight=2, uniform="live-columns")
+        body.grid_rowconfigure(0, weight=1, uniform="live-rows")
+        body.grid_rowconfigure(1, weight=1, uniform="live-rows")
+
+        packet_panel = ttk.Frame(
+            body, style="LivePanel.TFrame", padding=(12, 10), relief="solid", borderwidth=1,
+        )
+        packet_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 7), pady=(0, 7))
+        packet_panel.grid_rowconfigure(1, weight=1)
+        packet_panel.grid_columnconfigure(0, weight=1)
+        packet_header = ttk.Frame(packet_panel, style="LivePanel.TFrame")
+        packet_header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 7))
+        ttk.Label(packet_header, text="Пакеты и трафик", style="LivePanelTitle.TLabel").pack(side=LEFT)
+        ttk.Label(packet_header, text="цвет = протокол", style="LiveLegend.TLabel").pack(side=RIGHT)
+        packet_columns = ("number", "time", "source", "destination", "protocol", "length", "info")
+        packet_table = ttk.Treeview(
+            packet_panel, columns=packet_columns, show="headings", height=9,
+            style="Reference.Treeview",
+        )
+        headings = {
+            "number": "№", "time": "Время", "source": "Источник",
+            "destination": "Назначение", "protocol": "Протокол",
+            "length": "Длина", "info": "Описание",
+        }
+        widths = {"number": 45, "time": 72, "source": 130, "destination": 130, "protocol": 80, "length": 60, "info": 260}
+        for column in packet_columns:
+            packet_table.heading(column, text=headings[column])
+            packet_table.column(column, width=widths[column], minwidth=45, stretch=(column == "info"))
+        packet_tags = {
+            "critical": ("#FFE2E4", "#8B1E28"), "high": ("#FFECEE", "#A62831"),
+            "medium": ("#FFF2D8", "#8A5700"), "low": ("#EAF8EE", "#176B45"),
+            "info": ("#F4F7F8", REFERENCE_COLORS["text"]),
+            "proto_tcp": ("#E7F0FF", "#174EA6"), "proto_tls": ("#E6F8EE", "#166534"),
+            "proto_dns": ("#FFF2D8", "#8A5700"), "proto_icmp": ("#F0E9FF", "#6741A5"),
+            "proto_arp": ("#EEF2F4", "#4E626A"), "proto_http": ("#E2F7F5", "#0A746C"),
+            "proto_udp": ("#E8F7FF", "#0E6D95"),
+        }
+        for tag, (background, foreground) in packet_tags.items():
+            packet_table.tag_configure(tag, background=background, foreground=foreground)
+        packet_scroll = ttk.Scrollbar(packet_panel, orient="vertical", command=packet_table.yview)
+        packet_table.configure(yscrollcommand=packet_scroll.set)
+        packet_table.grid(row=1, column=0, sticky="nsew")
+        packet_scroll.grid(row=1, column=1, sticky="ns")
+        ttk.Label(
+            packet_panel, text="Двойной щелчок по строке открывает детали и hex пакета",
+            style="LiveLegend.TLabel",
+        ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(7, 0))
+        packet_table.bind("<<TreeviewSelect>>", lambda _event: self._network_live_show_selected_packet_detail())
+        packet_table.bind("<Double-1>", lambda _event: self._open_reference_packet_detail())
+        self._network_live_packet_table = packet_table
+
+        nmap_panel = ttk.Frame(
+            body, style="LiveConsole.TFrame", padding=(12, 10), relief="solid", borderwidth=1,
+        )
+        nmap_panel.grid(row=0, column=1, sticky="nsew", padx=(7, 0), pady=(0, 7))
+        nmap_panel.grid_rowconfigure(1, weight=1)
+        nmap_panel.grid_columnconfigure(0, weight=1)
+        nmap_header = ttk.Frame(nmap_panel, style="LiveConsole.TFrame")
+        nmap_header.grid(row=0, column=0, sticky="ew", pady=(0, 7))
+        ttk.Label(
+            nmap_header, text="Nmap: узлы, порты, сервисы",
+            background=REFERENCE_COLORS["navy"], foreground="#FFFFFF",
+            font=("Segoe UI Semibold", 10),
+        ).pack(side=LEFT)
+        ttk.Label(
+            nmap_header, text="●", background=REFERENCE_COLORS["navy"],
+            foreground=REFERENCE_COLORS["green"], font=("Segoe UI", 13),
+        ).pack(side=RIGHT)
+        self._network_live_nmap_text = scrolledtext.ScrolledText(
+            nmap_panel, wrap="word", font=("Cascadia Mono", 9),
+            background=REFERENCE_COLORS["navy"], foreground="#BCE6FF",
+            insertbackground="#FFFFFF", relief="flat", borderwidth=0,
+            padx=4, pady=4, state="disabled",
+        )
+        self._network_live_nmap_text.grid(row=1, column=0, sticky="nsew")
+
+        topology_panel = ttk.Frame(
+            body, style="LivePanel.TFrame", padding=(12, 10), relief="solid", borderwidth=1,
+        )
+        topology_panel.grid(row=1, column=0, sticky="nsew", padx=(0, 7), pady=(7, 0))
+        topology_panel.grid_rowconfigure(1, weight=1)
+        topology_panel.grid_columnconfigure(0, weight=1)
+        ttk.Label(topology_panel, text="Схема сети и узлы", style="LivePanelTitle.TLabel").grid(
+            row=0, column=0, sticky="w", pady=(0, 6),
+        )
+        self._network_live_canvas = Canvas(
+            topology_panel, bg="#FBFDFD", highlightthickness=0, height=220,
+        )
+        self._network_live_canvas.grid(row=1, column=0, sticky="nsew")
+        self._network_live_canvas.bind("<Configure>", lambda _event: self._render_network_scan_live_topology())
+
+        security_panel = ttk.Frame(
+            body, style="LivePanel.TFrame", padding=(12, 10), relief="solid", borderwidth=1,
+        )
+        security_panel.grid(row=1, column=1, sticky="nsew", padx=(7, 0), pady=(7, 0))
+        security_panel.grid_rowconfigure(1, weight=1)
+        security_panel.grid_columnconfigure(0, weight=1)
+        ttk.Label(security_panel, text="ИБ-анализ", style="LivePanelTitle.TLabel").grid(
+            row=0, column=0, sticky="w", pady=(0, 6),
+        )
+        security_canvas = Canvas(security_panel, bg="#FBFDFD", highlightthickness=0)
+        security_scroll = ttk.Scrollbar(security_panel, orient="vertical", command=security_canvas.yview)
+        security_canvas.configure(yscrollcommand=security_scroll.set)
+        security_canvas.grid(row=1, column=0, sticky="nsew")
+        security_scroll.grid(row=1, column=1, sticky="ns")
+        security_frame = ttk.Frame(security_canvas, style="LivePanel.TFrame")
+        security_window = security_canvas.create_window((0, 0), window=security_frame, anchor="nw")
+        security_frame.bind(
+            "<Configure>",
+            lambda _event: security_canvas.configure(scrollregion=security_canvas.bbox("all")),
+        )
+        security_canvas.bind(
+            "<Configure>",
+            lambda event: security_canvas.itemconfigure(security_window, width=max(1, event.width)),
+        )
+        self._network_live_security_canvas = security_canvas
+        self._network_live_security_frame = security_frame
+
+        for text_widget in (self._network_live_nmap_text,):
+            for tag, options in {
+                "risk_critical": {"foreground": "#FF8D96"},
+                "risk_high": {"foreground": "#FF9CA3"},
+                "risk_medium": {"foreground": "#FFD072"},
+                "risk_low": {"foreground": "#74E0A5"},
+                "risk_info": {"foreground": "#BCE6FF"},
+                "phase": {"foreground": "#75B9FF"},
+                "packet": {"foreground": "#61E4D4"},
+            }.items():
+                text_widget.tag_configure(tag, **options)
+
+        self._network_live_status.set("Запуск сетевого аудита...")
+        self._render_network_scan_live_dashboard("Сканирование запущено")
+        self._append_network_scan_event("Сетевой мониторинг активирован")
+        if network_scan.nmap_enabled:
+            self._append_network_scan_event("Nmap: ожидание запуска локального сетевого сканера")
+        else:
+            self._append_network_scan_event("Nmap: отключён пользователем")
+        if network_scan.capture_enabled:
+            capture_interfaces = ", ".join(network_scan.capture_interfaces) or "автовыбор"
+            self._append_network_scan_event(
+                "CAPTURE_ACTIVE|info|Захват трафика выполняется: "
+                f"интерфейсы={capture_interfaces}; длительность={network_scan.capture_duration} сек"
+            )
+        else:
+            self._append_network_scan_event("Traffic: захват отключён пользователем")
 
     def _start_network_scan_live_window_v2(self, network_scan: NetworkScanConfig, network_only: bool) -> None:
         if self._network_live_window:
@@ -1918,6 +3311,7 @@ class AuditWindow:
                     text_widget.tag_configure(tag, **options)
                 except Exception:
                     pass
+        self._apply_readme_live_theme()
         self._network_live_status.set("\u0417\u0430\u043f\u0443\u0441\u043a \u0441\u0435\u0442\u0435\u0432\u043e\u0433\u043e \u0430\u0443\u0434\u0438\u0442\u0430...")
         self._render_network_scan_live_dashboard("\u0421\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435 \u0437\u0430\u043f\u0443\u0449\u0435\u043d\u043e")
         self._append_network_scan_event("\u0421\u0435\u0442\u0435\u0432\u043e\u0439 \u043c\u043e\u043d\u0438\u0442\u043e\u0440\u0438\u043d\u0433 \u0430\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u043d")
@@ -1974,7 +3368,607 @@ class AuditWindow:
                 generic_nodes.append(match)
         return generic_nodes
 
+    def _open_reference_packet_detail(self) -> None:
+        table = self._network_live_packet_table
+        if not table or not self._network_live_window:
+            return
+        selected = table.selection()
+        if not selected:
+            return
+        details, bytes_hex = self._network_live_packet_detail_cache.get(str(selected[0]), ("", ""))
+        detail_window = Toplevel(self._network_live_window)
+        detail_window.title("Пакет: детали и байты")
+        detail_window.geometry("820x560")
+        detail_window.minsize(640, 420)
+        detail_window.transient(self._network_live_window)
+        tabs = ttk.Notebook(detail_window)
+        tabs.pack(fill=BOTH, expand=True, padx=12, pady=12)
+        for title, value, background, foreground in (
+            ("Детали пакета", details or "Детали пакета не переданы tshark.", "#F8FBFC", REFERENCE_COLORS["text"]),
+            ("Hex / bytes", bytes_hex or "Байты пакета отсутствуют для этой строки.", REFERENCE_COLORS["navy"], "#D7EEFF"),
+        ):
+            tab = ttk.Frame(tabs, style="LivePanel.TFrame", padding=(8, 8))
+            tabs.add(tab, text=title)
+            text_widget = scrolledtext.ScrolledText(
+                tab, wrap="word", font=("Cascadia Mono", 10),
+                background=background, foreground=foreground,
+                insertbackground=foreground, relief="flat", borderwidth=0,
+                padx=12, pady=12,
+            )
+            text_widget.pack(fill=BOTH, expand=True)
+            text_widget.insert(END, value)
+            text_widget.configure(state="disabled")
+
+    @staticmethod
+    def _network_live_topology_endpoint(value: object) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        if text.startswith("[") and "]" in text:
+            text = text[1 : text.index("]")]
+        elif text.count(":") == 1:
+            host, possible_port = text.rsplit(":", 1)
+            if possible_port.isdigit() and host:
+                text = host
+        text = text.strip("(){}<>")
+        lowered = text.casefold()
+        ignored = {
+            "-",
+            "?",
+            "unknown",
+            "waiting",
+            "ожидание",
+            "safe telemetry",
+            "rx/tx counters",
+            "selected interfaces",
+        }
+        if lowered in ignored or lowered.startswith("traffic:"):
+            return ""
+        return text.strip()
+
+    @staticmethod
+    def _network_live_topology_severity(value: object) -> str:
+        normalized = str(value or "INFO").strip().upper()
+        aliases = {"WARNING": "MEDIUM", "WARN": "MEDIUM", "ERROR": "HIGH"}
+        return aliases.get(normalized, normalized if normalized in {"INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"} else "INFO")
+
+    @staticmethod
+    def _network_live_topology_is_private(value: str) -> bool:
+        import ipaddress
+
+        try:
+            address = ipaddress.ip_address(value.split("%", 1)[0])
+        except ValueError:
+            return value.casefold() in {"local-ip", "localhost", "local"}
+        return address.is_private or address.is_loopback or address.is_link_local
+
+    def _network_live_topology_graph(self) -> dict[str, object]:
+        import ipaddress
+        import re
+
+        severity_rank = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+        nodes: dict[str, dict[str, object]] = {}
+        edges: dict[tuple[str, str], dict[str, object]] = {}
+
+        def ensure_node(node_id: str, *, label: str | None = None) -> dict[str, object] | None:
+            normalized = self._network_live_topology_endpoint(node_id)
+            if not normalized:
+                return None
+            node = nodes.setdefault(
+                normalized,
+                {
+                    "id": normalized,
+                    "label": label or normalized,
+                    "packets": 0,
+                    "source_packets": 0,
+                    "degree": 0,
+                    "protocols": set(),
+                    "severity": "INFO",
+                    "dns_score": 0,
+                    "service": False,
+                    "role": "endpoint",
+                },
+            )
+            if label:
+                node["label"] = label
+            return node
+
+        def raise_severity(node: dict[str, object] | None, severity: object) -> None:
+            if node is None:
+                return
+            candidate = self._network_live_topology_severity(severity)
+            current = self._network_live_topology_severity(node.get("severity"))
+            if severity_rank[candidate] > severity_rank[current]:
+                node["severity"] = candidate
+
+        def add_edge(source: str, target: str, protocol: str, severity: object, *, service: bool = False) -> None:
+            if not source or not target or source == target:
+                return
+            source_node = ensure_node(source)
+            target_node = ensure_node(target)
+            if source_node is None or target_node is None:
+                return
+            key = tuple(sorted((source, target), key=str.casefold))
+            edge = edges.setdefault(
+                key,
+                {
+                    "source": source,
+                    "target": target,
+                    "packets": 0,
+                    "protocols": set(),
+                    "severity": "INFO",
+                    "service": service,
+                },
+            )
+            edge["packets"] = int(edge["packets"]) + 1
+            if protocol:
+                edge["protocols"].add(protocol.upper())
+            edge["service"] = bool(edge["service"] or service)
+            candidate = self._network_live_topology_severity(severity)
+            if severity_rank[candidate] > severity_rank[self._network_live_topology_severity(edge["severity"])]:
+                edge["severity"] = candidate
+
+        events = list(getattr(self, "_network_live_events", ()))[-1500:]
+        for event in events:
+            packet = self._network_live_wireshark_packet_row(event) if event.startswith("PACKET_ROW|") else None
+            if packet is not None:
+                _number, _time, raw_source, raw_target, protocol, _length, info, severity, _details, _hex = packet
+                source = self._network_live_topology_endpoint(raw_source)
+                target = self._network_live_topology_endpoint(raw_target)
+                source_node = ensure_node(source)
+                target_node = ensure_node(target)
+                for node in (source_node, target_node):
+                    if node is None:
+                        continue
+                    node["packets"] = int(node["packets"]) + 1
+                    if protocol:
+                        node["protocols"].add(protocol.upper())
+                    raise_severity(node, severity)
+                if source_node is not None:
+                    source_node["source_packets"] = int(source_node["source_packets"]) + 1
+                upper_protocol = protocol.upper()
+                if upper_protocol in {"DNS", "MDNS", "LLMNR", "NBNS"}:
+                    response = "response" in info.casefold() or "ответ" in info.casefold()
+                    dns_node = source_node if response else target_node
+                    if dns_node is not None:
+                        dns_node["dns_score"] = int(dns_node["dns_score"]) + 2
+                add_edge(source, target, protocol, severity)
+                continue
+
+            lowered = event.casefold()
+            severity = "INFO"
+            event_parts = event.split("|", 2)
+            if len(event_parts) > 1:
+                severity = self._network_live_topology_severity(event_parts[1])
+            ip_values: list[str] = []
+            for candidate in re.findall(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])", event):
+                try:
+                    ipaddress.ip_address(candidate)
+                except ValueError:
+                    continue
+                ip_values.append(candidate)
+                raise_severity(ensure_node(candidate), severity)
+            if any(marker in lowered for marker in ("nmap", "open_service", "open port", "открыт", "service")):
+                port_matches = re.findall(r"(?i)\b(\d{1,5})\s*/\s*(tcp|udp)\b", event)
+                for host in ip_values:
+                    host_node = ensure_node(host)
+                    if host_node is not None:
+                        host_node["service"] = bool(port_matches) or bool(host_node["service"])
+                    for port, protocol in port_matches:
+                        if not 0 < int(port) <= 65535:
+                            continue
+                        service_id = f"service:{host}:{port}/{protocol.lower()}"
+                        service_node = ensure_node(service_id, label=f"{port}/{protocol.lower()}")
+                        if service_node is not None:
+                            service_node["service"] = True
+                            raise_severity(service_node, severity)
+                        add_edge(host, service_id, protocol, severity, service=True)
+
+        for raw_node in getattr(self, "_network_topology_nodes", set()):
+            ensure_node(str(raw_node))
+
+        for edge in edges.values():
+            source_node = nodes.get(str(edge["source"]))
+            target_node = nodes.get(str(edge["target"]))
+            if source_node is not None:
+                source_node["degree"] = int(source_node["degree"]) + 1
+            if target_node is not None:
+                target_node["degree"] = int(target_node["degree"]) + 1
+
+        if not nodes:
+            return {"nodes": [], "edges": [], "center": "", "packet_count": 0}
+
+        def center_score(node: dict[str, object]) -> tuple[int, int, int, str]:
+            node_id = str(node["id"])
+            local_label = node_id.casefold() in {"local-ip", "localhost", "local", "127.0.0.1", "::1"}
+            private = self._network_live_topology_is_private(node_id)
+            activity = int(node["degree"]) + int(node["source_packets"]) + int(node["packets"])
+            score = (
+                (1200 if local_label and activity else 0)
+                + (400 if private and activity else 0)
+                + int(node["degree"]) * 100
+                + int(node["source_packets"]) * 4
+                + int(node["packets"])
+            )
+            return score, int(node["degree"]), int(node["packets"]), node_id
+
+        center = max(nodes.values(), key=center_score)
+        center_id = str(center["id"])
+        for node in nodes.values():
+            node_id = str(node["id"])
+            severity = self._network_live_topology_severity(node["severity"])
+            if node_id == center_id:
+                role = "local"
+            elif severity in {"HIGH", "CRITICAL"}:
+                role = "risk"
+            elif bool(node["service"]) or node_id.startswith("service:"):
+                role = "service"
+            elif int(node["dns_score"]) > 0:
+                role = "dns"
+            else:
+                try:
+                    parsed = ipaddress.ip_address(node_id.split("%", 1)[0])
+                    gateway_suffix = parsed.version == 4 and str(parsed).rsplit(".", 1)[-1] in {"1", "254"}
+                    if parsed.is_loopback:
+                        role = "loopback"
+                    elif parsed.is_private and gateway_suffix:
+                        role = "gateway"
+                    elif not (parsed.is_private or parsed.is_loopback or parsed.is_link_local):
+                        role = "external"
+                    else:
+                        role = "endpoint"
+                except ValueError:
+                    lowered = node_id.casefold()
+                    if any(marker in lowered for marker in ("gateway", "router", "шлюз")):
+                        role = "gateway"
+                    elif any(marker in lowered for marker in ("dns", "domain")):
+                        role = "dns"
+                    elif any(marker in lowered for marker in ("adapter", "interface", "интерфейс")):
+                        role = "adapter"
+                    else:
+                        role = "endpoint"
+            node["role"] = role
+
+        packet_count = sum(1 for event in events if event.startswith("PACKET_ROW|"))
+        return {"nodes": list(nodes.values()), "edges": list(edges.values()), "center": center_id, "packet_count": packet_count}
+
+    @staticmethod
+    def _network_live_topology_short_label(value: object, limit: int = 23) -> str:
+        text = str(value or "-").strip()
+        if text.startswith("service:"):
+            text = text.rsplit(":", 1)[-1]
+        return text if len(text) <= limit else f"{text[: limit - 1]}…"
+
+    def _render_reference_live_topology(self) -> None:
+        from math import cos, pi, sin
+
+        canvas = getattr(self, "_network_topology_canvas", None) or getattr(self, "_network_live_canvas", None)
+        if canvas is None or not canvas.winfo_exists():
+            return
+        canvas.delete("all")
+        canvas.configure(background="#F8FAFC", highlightthickness=0)
+        width = max(canvas.winfo_width(), 460)
+        height = max(canvas.winfo_height(), 210)
+        graph = self._network_live_topology_graph()
+        all_nodes = list(graph["nodes"])
+        all_edges = list(graph["edges"])
+        if not all_nodes:
+            canvas.create_text(
+                width / 2,
+                height / 2,
+                text="Схема появится после получения реальных пакетов или результатов Nmap",
+                fill="#64748B",
+                font=("Segoe UI", 9),
+                width=max(280, width - 90),
+                justify="center",
+            )
+            return
+
+        severity_rank = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+        center_id = str(graph["center"])
+        density_capacity = max(7, min(31, int(width / 105) * max(1, int(height / 90))))
+
+        def node_priority(node: dict[str, object]) -> tuple[int, int, int, int, str]:
+            return (
+                1 if str(node["id"]) == center_id else 0,
+                severity_rank[self._network_live_topology_severity(node["severity"])],
+                int(node["degree"]),
+                int(node["packets"]),
+                str(node["id"]),
+            )
+
+        ordered_nodes = sorted(all_nodes, key=node_priority, reverse=True)
+        visible_nodes = ordered_nodes[:density_capacity]
+        if center_id not in {str(node["id"]) for node in visible_nodes}:
+            visible_nodes[-1] = next(node for node in all_nodes if str(node["id"]) == center_id)
+        visible_ids = {str(node["id"]) for node in visible_nodes}
+        hidden_count = max(0, len(all_nodes) - len(visible_nodes))
+        visible_edges = [
+            edge
+            for edge in all_edges
+            if str(edge["source"]) in visible_ids and str(edge["target"]) in visible_ids
+        ]
+
+        scale = max(0.68, min(1.18, min(width / 760, height / 285)))
+        if len(visible_nodes) > 18:
+            scale *= 0.76
+        elif len(visible_nodes) > 10:
+            scale *= 0.87
+        center_x = width * 0.46
+        center_y = height * 0.53
+        positions: dict[str, tuple[float, float]] = {center_id: (center_x, center_y)}
+        satellites = [node for node in visible_nodes if str(node["id"]) != center_id]
+        rings: list[list[dict[str, object]]] = []
+        first_ring_size = min(8, len(satellites))
+        if first_ring_size:
+            rings.append(satellites[:first_ring_size])
+        if len(satellites) > first_ring_size:
+            rings.append(satellites[first_ring_size:])
+        for ring_index, ring in enumerate(rings):
+            radius_x = min(width * (0.29 + ring_index * 0.16), width / 2 - 66 * scale)
+            radius_y = min(height * (0.31 + ring_index * 0.13), height / 2 - 28 * scale)
+            radius_x = max(radius_x, 120 * scale)
+            radius_y = max(radius_y, 56 * scale)
+            angle_offset = -pi / 2 + (pi / max(len(ring), 1) if ring_index else 0)
+            for index, node in enumerate(ring):
+                angle = angle_offset + 2 * pi * index / max(len(ring), 1)
+                x = center_x + radius_x * cos(angle)
+                y = center_y + radius_y * sin(angle)
+                positions[str(node["id"])] = (
+                    min(width - 82 * scale, max(82 * scale, x)),
+                    min(height - 34 * scale, max(42 * scale, y)),
+                )
+
+        palette = {
+            "local": ("#2563EB", "#93C5FD", "#FFFFFF"),
+            "gateway": ("#DCFCE7", "#4ADE80", "#166534"),
+            "service": ("#FFF7D6", "#F6C453", "#92400E"),
+            "dns": ("#E6F9FE", "#38BDF8", "#075985"),
+            "adapter": ("#F1F5F9", "#94A3B8", "#334155"),
+            "loopback": ("#F1F5F9", "#94A3B8", "#334155"),
+            "risk": ("#FFE4E6", "#FB7185", "#BE123C"),
+            "external": ("#ECFEFF", "#2DD4BF", "#115E59"),
+            "endpoint": ("#EFF6FF", "#93C5FD", "#1E3A8A"),
+        }
+        role_labels = {
+            "local": "ЛОКАЛЬНЫЙ УЗЕЛ",
+            "gateway": "ШЛЮЗ",
+            "service": "СЕРВИС",
+            "dns": "DNS",
+            "adapter": "ИНТЕРФЕЙС",
+            "loopback": "ЛОКАЛЬНАЯ ЦЕЛЬ",
+            "risk": "РИСК",
+            "external": "ВНЕШНИЙ УЗЕЛ",
+            "endpoint": "УЗЕЛ",
+        }
+
+        for edge in visible_edges:
+            source_id = str(edge["source"])
+            target_id = str(edge["target"])
+            if source_id not in positions or target_id not in positions:
+                continue
+            source_x, source_y = positions[source_id]
+            target_x, target_y = positions[target_id]
+            severity = self._network_live_topology_severity(edge["severity"])
+            protocols = sorted(str(item) for item in edge["protocols"])
+            line_color = "#FB7185" if severity in {"HIGH", "CRITICAL"} else "#F59E0B" if severity == "MEDIUM" else "#60A5FA"
+            line_width = 1 + min(3, int(edge["packets"]) // 25)
+            canvas.create_line(
+                source_x,
+                source_y,
+                target_x,
+                target_y,
+                fill=line_color,
+                width=line_width,
+                dash=(5, 4),
+            )
+            if len(visible_edges) <= 11 and protocols:
+                label = "/".join(protocols[:2])
+                if int(edge["packets"]) > 1:
+                    label = f"{label} · {edge['packets']}"
+                canvas.create_text(
+                    (source_x + target_x) / 2,
+                    (source_y + target_y) / 2 - 7 * scale,
+                    text=label,
+                    fill="#64748B",
+                    font=("Segoe UI", max(6, round(7 * scale))),
+                )
+
+        for node in visible_nodes:
+            node_id = str(node["id"])
+            x, y = positions.get(node_id, (center_x, center_y))
+            role = str(node["role"])
+            fill, outline, text_color = palette.get(role, palette["endpoint"])
+            display = self._network_live_topology_short_label(node.get("label", node_id), 24)
+            role_label = role_labels.get(role, "УЗЕЛ")
+            text = f"{role_label}\n{display}"
+            longest_line = max(len(line) for line in text.splitlines())
+            node_width = min(152 * scale, max(82 * scale, (longest_line * 6 + 24) * scale))
+            node_height = (45 if node_id == center_id else 39) * scale
+            canvas.create_oval(
+                x - node_width / 2,
+                y - node_height / 2,
+                x + node_width / 2,
+                y + node_height / 2,
+                fill=fill,
+                outline=outline,
+                width=3 if node_id == center_id else 1,
+            )
+            canvas.create_text(
+                x,
+                y,
+                text=text,
+                fill=text_color,
+                font=("Segoe UI Semibold", max(6, round((8 if node_id == center_id else 7) * scale))),
+                justify="center",
+            )
+
+        canvas.create_text(
+            14,
+            12,
+            anchor="nw",
+            text=f"{len(all_nodes)} узлов · {len(all_edges)} связей · {graph['packet_count']} пакетов",
+            fill="#475569",
+            font=("Segoe UI Semibold", max(7, round(8 * scale))),
+        )
+        if hidden_count:
+            canvas.create_text(
+                width - 14,
+                12,
+                anchor="ne",
+                text=f"Показаны наиболее активные · ещё {hidden_count}",
+                fill="#64748B",
+                font=("Segoe UI", max(7, round(8 * scale))),
+            )
+
+    def _update_reference_live_header(
+        self,
+        packet_rows: list[tuple[str, str, str, str, str, str, str, str, str, str]],
+    ) -> None:
+        summary = getattr(self, "_network_live_capture_summary", None)
+        if summary is None:
+            return
+        packet_count = len(packet_rows)
+        interfaces = str(getattr(self, "_network_live_interfaces_label", "") or "автовыбор")
+        if self._network_live_capture_active():
+            text = f"● Захват активен · {interfaces} · {packet_count} пакетов"
+        elif packet_count:
+            text = f"● Получено {packet_count} пакетов · анализ продолжается"
+        elif any("completed" in event.casefold() or "заверш" in event.casefold() for event in self._network_live_events[-20:]):
+            text = "● Сетевой анализ завершён"
+        else:
+            text = "● Подготовка сетевого мониторинга"
+        summary.set(text)
+
+    @staticmethod
+    def _reference_security_card_data(event: str) -> tuple[str, str, str]:
+        import json
+
+        parts = event.split("|", 2)
+        severity = parts[1].strip().upper() if len(parts) > 1 else "INFO"
+        aliases = {"WARNING": "MEDIUM", "WARN": "MEDIUM", "ERROR": "HIGH"}
+        severity = aliases.get(severity, severity)
+        if severity not in {"INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"}:
+            lowered = event.casefold()
+            severity = "HIGH" if "high" in lowered or "critical" in lowered else "MEDIUM" if "risk" in lowered else "INFO"
+        detail = parts[2].strip() if len(parts) > 2 else event.strip()
+        if detail.startswith("{"):
+            try:
+                payload = json.loads(detail)
+            except (TypeError, ValueError):
+                payload = None
+            if isinstance(payload, dict):
+                source = str(payload.get("Source") or payload.get("source") or "-")
+                target = str(payload.get("Destination") or payload.get("destination") or "-")
+                protocol = str(payload.get("Protocol") or payload.get("protocol") or "-")
+                info = str(payload.get("Info") or payload.get("info") or "Сетевое событие")
+                detail = f"{protocol}: {source} → {target}. {info}"
+        detail = " ".join(detail.split())
+        if len(detail) > 220:
+            detail = f"{detail[:219]}…"
+        titles = {
+            "CRITICAL": "Критический сетевой риск",
+            "HIGH": "Сетевой риск высокого уровня",
+            "MEDIUM": "Требуется внимание",
+            "LOW": "Событие низкого риска",
+            "INFO": "Информационное событие",
+        }
+        return severity, titles[severity], detail or "Дополнительные сведения отсутствуют"
+
+    def _render_reference_security_cards_v2(self, security_events: list[str]) -> None:
+        frame = getattr(self, "_network_live_security_frame", None)
+        if frame is None or not frame.winfo_exists():
+            return
+        for child in frame.winfo_children():
+            child.destroy()
+        events = security_events[-18:]
+        if not events:
+            packets = sum(1 for event in self._network_live_events if event.startswith("PACKET_ROW|"))
+            events = [f"CAPTURE_STATUS|INFO|ИБ-риски пока не обнаружены. Проанализировано пакетов: {packets}."]
+        palette = {
+            "CRITICAL": ("#FFF1F2", "#FDA4AF", "#E11D48"),
+            "HIGH": ("#FFF1F2", "#FDA4AF", "#F43F5E"),
+            "MEDIUM": ("#FFF7E8", "#F5C76B", "#F59E0B"),
+            "LOW": ("#ECFDF5", "#86EFAC", "#22C55E"),
+            "INFO": ("#EFF6FF", "#93C5FD", "#3B82F6"),
+        }
+        for event in events:
+            severity, title, detail = self._reference_security_card_data(event)
+            fill, border, accent = palette[severity]
+            card = ctk.CTkFrame(frame, corner_radius=9, fg_color=fill, border_width=1, border_color=border)
+            card.pack(fill=X, padx=2, pady=(0, 7))
+            heading = ctk.CTkFrame(card, fg_color="transparent")
+            heading.pack(fill=X, padx=10, pady=(8, 2))
+            ctk.CTkLabel(
+                heading,
+                text="●",
+                text_color=accent,
+                font=("Segoe UI", 11),
+                width=14,
+            ).pack(side=LEFT)
+            ctk.CTkLabel(
+                heading,
+                text=title,
+                text_color="#334155",
+                font=("Segoe UI Semibold", 9),
+                anchor="w",
+            ).pack(side=LEFT, fill=X, expand=True, padx=(4, 0))
+            ctk.CTkLabel(
+                card,
+                text=detail,
+                text_color="#64748B",
+                font=("Segoe UI", 8),
+                anchor="w",
+                justify="left",
+                wraplength=330,
+            ).pack(fill=X, padx=28, pady=(0, 9))
+
+    def _render_reference_security_cards(self, security_events: list[str]) -> None:
+        from tkinter import Frame, Label
+
+        frame = getattr(self, "_network_live_security_frame", None)
+        if frame is None or not frame.winfo_exists():
+            return
+        for child in frame.winfo_children():
+            child.destroy()
+        events = security_events[-18:]
+        if not events:
+            packets = sum(1 for event in self._network_live_events if event.startswith("PACKET_ROW|"))
+            events = [f"CAPTURE_STATUS|INFO|ИБ-риски пока не обнаружены. Проанализировано пакетов: {packets}."]
+        palette = {
+            "CRITICAL": ("#FFF1F2", "#FDA4AF", "#E11D48"),
+            "HIGH": ("#FFF1F2", "#FDA4AF", "#F43F5E"),
+            "MEDIUM": ("#FFF7E8", "#F5C76B", "#D97706"),
+            "LOW": ("#ECFDF5", "#86EFAC", "#15803D"),
+            "INFO": ("#EFF6FF", "#93C5FD", "#1D4ED8"),
+        }
+        for event in events:
+            severity, title, detail = self._reference_security_card_data(event)
+            fill, border, accent = palette[severity]
+            card = Frame(frame, background=fill, highlightthickness=1, highlightbackground=border)
+            card.pack(fill=X, padx=2, pady=(0, 7))
+            Label(
+                card,
+                text=f"●  {title}",
+                background=fill,
+                foreground=accent,
+                font=("Segoe UI", 9, "bold"),
+                anchor="w",
+            ).pack(fill=X, padx=10, pady=(8, 2))
+            Label(
+                card,
+                text=detail,
+                background=fill,
+                foreground="#64748B",
+                font=("Segoe UI", 8),
+                anchor="w",
+                justify="left",
+                wraplength=320,
+            ).pack(fill=X, padx=24, pady=(0, 9))
+
     def _render_network_scan_live_topology(self) -> None:
+        if getattr(self, "_reference_live_ui", False):
+            return self._render_reference_live_topology()
         if not self._network_live_canvas:
             return
         canvas = self._network_live_canvas
@@ -2120,27 +4114,39 @@ class AuditWindow:
             return
         self._network_live_status.set(status)
         events = self._network_live_events[-500:]
-        packet_rows = []
+        actual_packet_rows = []
+        telemetry_packet_rows = []
         nmap_events = []
         security_events = []
         for event in events:
             packet_row = self._network_live_wireshark_packet_row(event)
             if packet_row:
-                packet_rows.append(packet_row)
+                if event.startswith("PACKET_ROW|"):
+                    actual_packet_rows.append(packet_row)
+                else:
+                    telemetry_packet_rows.append(packet_row)
             if self._network_live_event_is_nmap(event):
                 nmap_events.append(event)
             if self._network_live_event_is_security(event):
                 security_events.append(event)
+        packet_rows = actual_packet_rows or telemetry_packet_rows[-1:]
         self._network_live_update_summary(packet_rows, security_events)
         self._network_live_fill_packet_table(packet_rows[-250:])
         self._network_live_fill_nodes_table()
         self._network_live_fill_text(self._network_live_nmap_text, nmap_events[-180:], empty="Nmap \u0435\u0449\u0451 \u043d\u0435 \u0432\u0435\u0440\u043d\u0443\u043b \u0441\u043e\u0431\u044b\u0442\u0438\u044f.")
-        self._network_live_fill_text(
-            self._network_live_security_text,
-            security_events[-180:],
-            empty="\u0418\u0411-\u0440\u0438\u0441\u043a\u0438 \u043f\u043e\u043a\u0430 \u043d\u0435 \u043e\u0431\u043d\u0430\u0440\u0443\u0436\u0435\u043d\u044b.",
-        )
-        self._network_live_fill_text(self._network_live_log_text, events[-220:], empty="\u0416\u0443\u0440\u043d\u0430\u043b \u043f\u0443\u0441\u0442.")
+        if getattr(self, "_reference_live_ui", False):
+            if getattr(self, "_reference_live_ui_version", 3) >= 4:
+                self._render_reference_security_cards_v2(security_events)
+            else:
+                self._render_reference_security_cards(security_events)
+            self._update_reference_live_header(packet_rows)
+        else:
+            self._network_live_fill_text(
+                self._network_live_security_text,
+                security_events[-180:],
+                empty="\u0418\u0411-\u0440\u0438\u0441\u043a\u0438 \u043f\u043e\u043a\u0430 \u043d\u0435 \u043e\u0431\u043d\u0430\u0440\u0443\u0436\u0435\u043d\u044b.",
+            )
+            self._network_live_fill_text(self._network_live_log_text, events[-220:], empty="\u0416\u0443\u0440\u043d\u0430\u043b \u043f\u0443\u0441\u0442.")
         self._render_network_scan_live_topology()
 
     def _network_live_update_summary(self, packet_rows: list[tuple[str, str, str, str, str, str, str, str, str, str]], security_events: list[str]) -> None:
@@ -2192,8 +4198,7 @@ class AuditWindow:
                 self._network_live_show_packet_detail("", "")
                 return
             for row in rows:
-                severity = row[7].lower()
-                iid = table.insert("", END, values=row[:7], tags=(severity,))
+                iid = table.insert("", END, values=row[:7], tags=(self._network_live_packet_tag(row),))
                 self._network_live_packet_detail_cache[str(iid)] = (row[8], row[9])
             children = table.get_children()
             if children:
@@ -2204,6 +4209,18 @@ class AuditWindow:
                 self._network_live_show_packet_detail(details, bytes_hex)
         except Exception:
             return
+
+    def _network_live_packet_tag(self, row: tuple[str, str, str, str, str, str, str, str, str, str]) -> str:
+        severity = str(row[7] or "info").lower()
+        if severity in {"critical", "high", "medium"}:
+            return severity
+        protocol = str(row[4] or "").strip().lower()
+        protocol_tags = {
+            "tcp": "proto_tcp", "tls": "proto_tls", "https": "proto_tls",
+            "dns": "proto_dns", "icmp": "proto_icmp", "arp": "proto_arp",
+            "http": "proto_http", "udp": "proto_udp",
+        }
+        return protocol_tags.get(protocol, severity if severity in {"low", "info"} else "info")
 
     def _network_live_show_selected_packet_detail(self) -> None:
         table = self._network_live_packet_table
@@ -2607,6 +4624,10 @@ class AuditWindow:
         self._network_live_packet_details_text = None
         self._network_live_packet_hex_text = None
         self._network_live_packet_detail_cache = {}
+        self._network_live_security_frame = None
+        self._network_live_security_canvas = None
+        self._reference_live_ui = False
+        self._reference_live_ui_version = 0
 
     def _run_background(
         self,

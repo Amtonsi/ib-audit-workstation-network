@@ -3,6 +3,8 @@
 from pathlib import Path
 import zipfile
 
+from PyInstaller.utils.hooks import collect_data_files
+
 
 SPEC_DIR = Path(SPECPATH).resolve()
 PROJECT_ROOT = SPEC_DIR.parent.parent
@@ -39,6 +41,7 @@ a = Analysis(
         (build_tool_bundle('nmap'), 'tools-bundles'),
         (build_tool_bundle('wireshark'), 'tools-bundles'),
         *optional_tool_tree('npcap'),
+        *collect_data_files('customtkinter'),
     ],
     hiddenimports=[],
     hookspath=[],

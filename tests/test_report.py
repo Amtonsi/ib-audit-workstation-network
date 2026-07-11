@@ -169,6 +169,8 @@ class HtmlReportBuilderTests(unittest.TestCase):
         html = HtmlReportBuilder().render(run, [service, flow], [], self._assessment([service, flow]))
 
         self.assertIn("Network Intelligence", html)
+        self.assertEqual(1, html.count("href='#s-network-intelligence'"))
+        self.assertEqual(1, html.count("id='s-network-intelligence'"))
         self.assertIn("Open services", html)
         self.assertIn("Traffic flows", html)
         self.assertIn("192.168.1.10:51515", html)

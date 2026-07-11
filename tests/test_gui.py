@@ -65,6 +65,27 @@ class FakeWidget:
 
 
 class AuditWindowReportImportTests(unittest.TestCase):
+    def test_network_state_refresh_preserves_open_live_widgets(self):
+        window = AuditWindow.__new__(AuditWindow)
+        packet_table = object()
+        nmap_console = object()
+        window._network_live_packet_table = packet_table
+        window._network_live_nmap_text = nmap_console
+
+        window._ensure_network_state()
+
+        self.assertIs(packet_table, window._network_live_packet_table)
+        self.assertIs(nmap_console, window._network_live_nmap_text)
+
+    def test_capture_interface_uses_stable_tshark_index(self):
+        window = AuditWindow.__new__(AuditWindow)
+
+        token = window._network_interface_id(
+            {"index": "11", "name": "Беспроводная сеть", "description": "Wi-Fi"}
+        )
+
+        self.assertEqual("11", token)
+
     def test_window_bounds_fit_small_laptop_screen(self):
         bounds = window_bounds_for_screen(1024, 600)
 
@@ -827,6 +848,109 @@ class AuditWindowReportImportTests(unittest.TestCase):
             args=(window.active_cancel_token,),
             daemon=True,
         )
+
+
+class AuditWindowDynamicTopologyTests(unittest.TestCase):
+    def _window_with_events(self, *events: str) -> AuditWindow:
+        window = AuditWindow.__new__(AuditWindow)
+        window._network_live_events = list(events)
+        window._network_topology_nodes = set()
+        return window
+
+    def test_topology_is_built_only_from_observed_packet_endpoints(self) -> None:
+        packet = (
+            'PACKET_ROW|INFO|{"No.":"1","Time":"0.001","Source":"192.168.10.25",'
+            '"Destination":"8.8.8.8","Protocol":"DNS","Length":"74",'
+            '"Info":"Standard query A example.test","Details":"","Bytes Hex":""}'
+        )
+        graph = self._window_with_events(packet)._network_live_topology_graph()
+
+        node_ids = {str(node["id"]) for node in graph["nodes"]}
+        self.assertEqual(node_ids, {"192.168.10.25", "8.8.8.8"})
+        self.assertEqual(len(graph["edges"]), 1)
+        self.assertEqual(graph["center"], "192.168.10.25")
+        self.assertEqual(next(node["role"] for node in graph["nodes"] if node["id"] == "8.8.8.8"), "dns")
+
+    def test_topology_risk_and_nmap_service_are_derived_from_events(self) -> None:
+        packet = (
+            'PACKET_ROW|INFO|{"No.":"2","Time":"0.002","Source":"192.168.10.25",'
+            '"Destination":"1.1.1.1","Protocol":"TLS","Length":"1514",'
+            '"Info":"Application data","Details":"","Bytes Hex":""}'
+        )
+        window = self._window_with_events(
+            packet,
+            "TRAFFIC_RISK|HIGH|Suspicious connection to 1.1.1.1",
+            "NMAP|INFO|Host 192.168.10.25 has 443/tcp open https",
+        )
+        graph = window._network_live_topology_graph()
+
+        nodes = {str(node["id"]): node for node in graph["nodes"]}
+        self.assertEqual(nodes["1.1.1.1"]["role"], "risk")
+        self.assertEqual(nodes["1.1.1.1"]["severity"], "HIGH")
+        service_nodes = [node for node in graph["nodes"] if str(node["id"]).startswith("service:")]
+        self.assertEqual(len(service_nodes), 1)
+        self.assertEqual(service_nodes[0]["label"], "443/tcp")
+        self.assertTrue(any(bool(edge["service"]) for edge in graph["edges"]))
+
+    def test_inactive_loopback_scan_target_does_not_replace_active_local_center(self) -> None:
+        packets = [
+            (
+                'PACKET_ROW|INFO|{"No.":"1","Time":"0.001","Source":"10.8.1.1",'
+                '"Destination":"104.18.32.47","Protocol":"TLS","Length":"128",'
+                '"Info":"Application data","Details":"","Bytes Hex":""}'
+            ),
+            (
+                'PACKET_ROW|INFO|{"No.":"2","Time":"0.002","Source":"10.8.1.1",'
+                '"Destination":"1.1.1.1","Protocol":"DNS","Length":"74",'
+                '"Info":"Standard query","Details":"","Bytes Hex":""}'
+            ),
+        ]
+        window = self._window_with_events(*packets)
+        window._network_topology_nodes = {"127.0.0.1"}
+
+        graph = window._network_live_topology_graph()
+
+        self.assertEqual(graph["center"], "10.8.1.1")
+        center = next(node for node in graph["nodes"] if node["id"] == "10.8.1.1")
+        self.assertEqual(center["role"], "local")
+        loopback = next(node for node in graph["nodes"] if node["id"] == "127.0.0.1")
+        self.assertEqual(loopback["role"], "loopback")
+
+    def test_topology_endpoint_normalizes_ports_without_damaging_ipv6(self) -> None:
+        self.assertEqual(AuditWindow._network_live_topology_endpoint("192.168.1.2:443"), "192.168.1.2")
+        self.assertEqual(AuditWindow._network_live_topology_endpoint("[fe80::1]:5353"), "fe80::1")
+        self.assertEqual(AuditWindow._network_live_topology_endpoint("fe80::2"), "fe80::2")
+
+    def test_live_header_reports_selected_interface_and_real_packet_count(self) -> None:
+        class Value:
+            text = ""
+
+            def set(self, value: str) -> None:
+                self.text = value
+
+        window = AuditWindow.__new__(AuditWindow)
+        window._network_live_capture_summary = Value()
+        window._network_live_interfaces_label = "11"
+        window._network_live_events = ["CAPTURE_ACTIVE|INFO|interface=11"]
+        window._network_live_capture_active = lambda: True
+        row = ("1", "0.01", "local", "remote", "TCP", "64", "SYN", "INFO", "", "")
+
+        window._update_reference_live_header([row, row])
+
+        self.assertIn("11", window._network_live_capture_summary.text)
+        self.assertIn("2 пакетов", window._network_live_capture_summary.text)
+
+    def test_security_card_compacts_packet_json(self) -> None:
+        event = (
+            'TRAFFIC_RISK|HIGH|{"Source":"192.168.1.2","Destination":"1.1.1.1",'
+            '"Protocol":"TLS","Info":"Repeated reset"}'
+        )
+
+        severity, title, detail = AuditWindow._reference_security_card_data(event)
+
+        self.assertEqual(severity, "HIGH")
+        self.assertIn("высокого уровня", title)
+        self.assertEqual(detail, "TLS: 192.168.1.2 → 1.1.1.1. Repeated reset")
 
 
 if __name__ == "__main__":

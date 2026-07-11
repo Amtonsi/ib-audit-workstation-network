@@ -110,7 +110,8 @@ class UserGuidePdfTests(unittest.TestCase):
 
         self.assertIn("tools\\\\nmap", build_page)
         self.assertIn("tools\\\\wireshark", build_page)
-        self.assertIn("tools\\\\npcap", build_page)
+        self.assertNotIn("tools\\\\npcap", build_page)
+        self.assertIn("Драйвер Npcap не распространяется внутри EXE", build_page)
         self.assertNotIn("IBuditWorkstation.spec", build_page)
         self.assertNotIn("--onefile", build_page)
 

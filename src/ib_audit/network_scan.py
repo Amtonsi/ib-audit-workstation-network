@@ -272,7 +272,7 @@ def build_nmap_command(
         command_list.append(timing if timing.startswith("-") else f"-{timing}")
     command_list.append("-sT")
     if config.nmap_open_only:
-        command_list.append("-open")
+        command_list.append("--open")
     command_list.extend(["-oX", "-", "-p", _normalize_ports(config.ports)])
     if config.nmap_service_detection:
         command_list.append("-sV")
@@ -578,6 +578,7 @@ def _parse_nmap_xml(raw: str) -> list[NetworkScanService]:
     raw = (raw or "").strip()
     if not raw:
         return []
+    raw = re.sub(r"<!DOCTYPE\s+nmaprun\s*>", "", raw, count=1, flags=re.IGNORECASE)
     try:
         root = safe_xml_fromstring(raw)
     except (ET.ParseError, ValueError):

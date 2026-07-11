@@ -12,6 +12,11 @@ GITHUB_README = f"{GITHUB_REPO}#readme"
 GITHUB_RELEASES = f"{GITHUB_REPO}/releases"
 GITHUB_ISSUES = f"{GITHUB_REPO}/issues"
 GITHUB_ACTIONS = f"{GITHUB_REPO}/actions"
+ROOT_DIR = Path(__file__).resolve().parents[1]
+DOC_IMAGES = ROOT_DIR / "docs" / "images"
+MAIN_UI_IMAGE = DOC_IMAGES / "gui-overview.png"
+NETWORK_UI_IMAGE = DOC_IMAGES / "network-monitor-live.png"
+NETWORK_DENSE_IMAGE = DOC_IMAGES / "network-topology-scaled.png"
 
 SOURCE_LINKS = [
     ("CISA KEV", "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"),
@@ -34,6 +39,7 @@ def build_pdf(output_path: str | Path) -> Path:
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4, landscape
         from reportlab.lib.units import mm
+        from reportlab.lib.utils import ImageReader
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
         from reportlab.pdfgen import canvas
@@ -143,6 +149,27 @@ def build_pdf(output_path: str | Path) -> Path:
         c.setFillColor(fill)
         c.setStrokeColor(stroke)
         c.roundRect(x, y, w, h, radius, stroke=1, fill=1)
+
+    def draw_screenshot(path: Path, x: float, y: float, w: float, h: float) -> None:
+        card(x, y, w, h, fill=colors.white, stroke=line, radius=12)
+        if not path.exists():
+            set_font(10, bold=True, color=red)
+            c.drawCentredString(x + w / 2, y + h / 2, f"Иллюстрация не найдена: {path.name}")
+            return
+        image = ImageReader(str(path))
+        image_width, image_height = image.getSize()
+        scale = min((w - 12) / image_width, (h - 12) / image_height)
+        draw_width = image_width * scale
+        draw_height = image_height * scale
+        c.drawImage(
+            image,
+            x + (w - draw_width) / 2,
+            y + (h - draw_height) / 2,
+            width=draw_width,
+            height=draw_height,
+            preserveAspectRatio=True,
+            mask="auto",
+        )
 
     def section_header(title: str, page: int) -> None:
         c.setFillColor(canvas_bg)
@@ -364,8 +391,8 @@ def build_pdf(output_path: str | Path) -> Path:
     set_font(12.5, color=colors.white)
     y = page_height - 238
     y = draw_wrapped(
-        "Локальная read-only рабочая станция для аудита Windows, анализа HTML-отчётов "
-        "и проверки известных уязвимостей по CISA KEV, NVD и ФСТЭК БДУ.",
+        "Локальная read-only рабочая станция для аудита Windows, анализа HTML-отчётов, "
+        "проверки уязвимостей и контролируемого сетевого мониторинга Nmap + tshark.",
         205,
         y,
         320,
@@ -400,7 +427,7 @@ def build_pdf(output_path: str | Path) -> Path:
     bullet_list(
         [
             "исходный код, тесты, README, MIT-лицензия",
-            "безопасные SVG-схемы без реальных данных",
+            "безопасные схемы и PNG-скриншоты только с тестовыми данными",
             "скрипты сборки и GitHub Actions",
         ],
         x + 416,
@@ -463,39 +490,35 @@ def build_pdf(output_path: str | Path) -> Path:
     c.showPage()
 
     # Page 3 - UI
-    section_header("2. Оболочка приложения", 3)
-    draw_simple_window(margin, 92, 470, 382)
-    x2 = margin + 500
+    section_header("2. Главное окно и сетевые интерфейсы", 3)
+    draw_screenshot(MAIN_UI_IMAGE, margin, 124, 492, 372)
+    x2 = margin + 512
     y = page_height - 100
-    set_font(16, bold=True)
-    c.drawString(x2, y, "Основные зоны окна")
+    set_font(15, bold=True)
+    c.drawString(x2, y, "Что находится на экране")
     y -= 26
     y = bullet_list(
         [
-            "левая панель запускает полный аудит, пакетную HTML-проверку и обновление источников",
-            "кнопка Отменить активна только во время операции и останавливает работу в безопасной точке",
-            "панель источников показывает CISA KEV, NVD и ФСТЭК БДУ",
-            "кнопка Обновить базы сначала ищет vulnerability_sources.db в папке проекта и подпапках, затем докачивает только актуальные или отсутствующие источники",
-            "режимы уязвимостей переключают полный онлайн-поиск или быстрый кэш NVD/CISA",
-            "журнал выполнения показывает текущий этап, ошибки и прогресс",
-            "нижняя подпись фиксирует автора приложения",
+            "«Полный аудит» проверяет Windows, «Аудит сети» запускает только сетевые коллекторы.",
+            "Цели Nmap ограничены локальным узлом, пока пользователь явно не введёт другое разрешённое значение.",
+            "Интерфейсы определяются автоматически и выбираются отдельными чекбоксами.",
+            "Зелёная строка означает активный трафик; янтарная - физический линк без данных; серая - неактивный или виртуальный адаптер.",
+            "Нижняя командная панель показывает готовность и запускает операцию только по команде пользователя.",
         ],
         x2,
         y,
-        230,
+        205,
     )
-    y -= 12
-    card(x2, y - 86, 238, 86, fill=light_amber)
-    set_font(12.5, bold=True, color=amber)
-    c.drawString(x2 + 14, y - 22, "Практический совет")
+    card(x2, 78, 205, 72, fill=light_amber)
+    set_font(11, bold=True, color=amber)
+    c.drawString(x2 + 12, 128, "Безопасный выбор")
     draw_wrapped(
-        "Для максимального покрытия запускайте программу от администратора. "
-        "Если источник данных недоступен, объект получает статус insufficient_data, а не скрывается.",
-        x2 + 14,
-        y - 42,
-        210,
-        size=9.5,
-        leading=12.5,
+        "Не выбирайте все интерфейсы. Для обычного аудита достаточно одного активного физического адаптера.",
+        x2 + 12,
+        109,
+        181,
+        size=8.5,
+        leading=10.5,
     )
     c.showPage()
 
@@ -511,53 +534,43 @@ def build_pdf(output_path: str | Path) -> Path:
         ),
         (
             "2. Выбрать папку отчётов",
-            "Проверьте поле «Папка отчётов». Здесь сохраняются HTML и сводные "
-            "отчёты. Рабочая audit DB создаётся временно и удаляется после завершения.",
+            "Здесь сохраняются HTML и сводные отчёты. Рабочая audit DB создаётся временно и удаляется после завершения.",
             light_blue,
             blue,
         ),
         (
             "3. Обновить базы",
-            "Нажмите «Обновить базы». Программа переиспользует vulnerability_sources.db "
-            "и добавляет только отсутствующие или актуальные NVD, CISA, CPE и "
-            "локальные XLSX ФСТЭК.",
+            "Программа переиспользует vulnerability_sources.db и добавляет актуальные NVD, CISA, CPE и локальные XLSX ФСТЭК.",
             light_violet,
             violet,
         ),
         (
             "4. Выбрать режим",
-            "«Полный онлайн ФСТЭК» выполняет онлайн-поиск БДУ. Быстрый режим "
-            "использует локальные NVD, CISA и импортированные XLSX ФСТЭК.",
+            "«Полный аудит» проверяет Windows. «Аудит сети» запускает только Nmap, захват и сетевой ИБ-анализ.",
             light_amber,
             amber,
         ),
         (
             "5. Запустить проверку",
-            "«Полный аудит компьютера» проверяет текущую систему. «Проверить "
-            "HTML-отчёты» позволяет выбрать несколько документов и получить "
-            "один сводный HTML.",
+            "Для сети проверьте цели Nmap, отметьте активный интерфейс и нужные функции. Для полного аудита сразу нажмите «Запустить».",
             light_green,
             green,
         ),
         (
             "6. Следить или отменить",
-            "Текущий этап отображается в журнале выполнения. Кнопка «Отменить» "
-            "останавливает операцию в ближайшей безопасной точке.",
+            "Текущий этап виден в интерфейсе. Сетевой монитор показывает PACKET_ROW, а отмена останавливает работу в безопасной точке.",
             light_red,
             red,
         ),
         (
             "7. Открыть результат",
-            "После завершения нажмите «Открыть последний отчёт» либо «Открыть "
-            "папку отчётов». Сетевые источники и ошибки перечисляются в диагностике.",
+            "HTML не открывается автоматически. После завершения нажмите «Открыть отчёт»; сетевые пакеты свёрнуты по умолчанию.",
             light_blue,
             blue,
         ),
         (
             "8. Перейти к риску",
-            "В сводном HTML раскройте компьютер и полный инвентарь. Нажмите "
-            "компактную ссылку CVE/БДУ под объектом для перехода к точной "
-            "карточке риска.",
+            "В HTML нажмите CVE/БДУ для точной карточки. В сетевом мониторе двойной щелчок открывает детали и hex-байты пакета.",
             light_teal,
             teal,
         ),
@@ -590,8 +603,7 @@ def build_pdf(output_path: str | Path) -> Path:
     set_font(11.5, bold=True, color=amber)
     c.drawString(margin + 14, note_y + 34, "После обновления приложения")
     draw_wrapped(
-        "Старые HTML-файлы не изменяются автоматически. Чтобы увидеть новые "
-        "элементы отчёта, запустите проверку исходных HTML-документов повторно.",
+        "Старые HTML-файлы не изменяются автоматически. Новый пакетный монитор, динамическая схема и сетевой анализ появляются только в заново сформированном отчёте.",
         margin + 205,
         note_y + 34,
         page_width - margin * 2 - 220,
@@ -656,91 +668,53 @@ def build_pdf(output_path: str | Path) -> Path:
     c.showPage()
 
     # Page 6 - network audit
-    section_header("4. Сетевой аудит: Nmap и анализ трафика", 6)
+    section_header("4. Сетевой монитор: реальные пакеты и динамическая схема", 6)
     x = margin
-    y = page_height - 104
+    draw_screenshot(NETWORK_UI_IMAGE, x, 128, 500, 370)
+    x2 = x + 520
     label_box(
-        "Только текущий ноутбук",
-        "Если цели не заполнены, Nmap проверяет 127.0.0.1 и IPv4-адреса локальных адаптеров. "
-        "Подсети и удалённые узлы не добавляются автоматически.",
-        x,
-        y - 88,
-        242,
-        88,
-        fill=light_green,
-        title_color=green,
-    )
-    label_box(
-        "Быстрый профиль Nmap",
-        "Порты: 22, 80, 135, 139, 443, 445, 3389, 5985, 5986, 8080, 8443. "
-        "Режим T3, тайм-аут 120 секунд, определение ОС выключено по умолчанию.",
-        x + 270,
-        y - 88,
-        242,
-        88,
+        "Локальный профиль Nmap",
+        "Цель: 127.0.0.1 и адрес адаптера. Порты: 22, 80, 135, 139, 443, 445, 3389, 5985, 5986, 8080, 8443. Режим T3, тайм-аут 120 секунд.",
+        x2,
+        414,
+        198,
+        84,
         fill=light_blue,
         title_color=blue,
     )
     label_box(
-        "Правовая граница",
-        "Сканируйте только собственные устройства и сети, для которых получено явное разрешение. "
-        "Удалённая цель вводится пользователем вручную.",
-        x + 540,
-        y - 88,
-        242,
-        88,
+        "Интерфейсы и пакеты",
+        "«Загрузить интерфейсы» обновляет список. Зелёная маркировка означает трафик. tshark показывает реальные строки и hex-байты.",
+        x2,
+        320,
+        198,
+        84,
+        fill=light_teal,
+        title_color=teal,
+    )
+    label_box(
+        "Динамический граф",
+        "Центр выбирается по активности. Шлюз, DNS, сервис, внешний узел и риск появляются только из пакетов, Nmap и ИБ-событий.",
+        x2,
+        226,
+        198,
+        84,
         fill=light_amber,
         title_color=amber,
     )
-
-    y -= 122
-    set_font(15, bold=True)
-    c.drawString(x, y, "Интерфейсы и захват")
-    y -= 26
-    bullet_list(
-        [
-            "Нажмите «Загрузить интерфейсы»: каждый адаптер отображается отдельной строкой с чекбоксом.",
-            "Зелёная маркировка означает наличие RX/TX-трафика; неактивные и виртуальные интерфейсы выделяются отдельно.",
-            "Для захвата выберите один или несколько конкретных интерфейсов. Автозахват по всем адаптерам отключён.",
-            "При доступном tshark монитор показывает пакеты, протокол, источник, назначение, длину, описание, детали и hex-байты.",
-            "Если драйверный захват недоступен, приложение использует безопасную Windows-телеметрию соединений и счётчиков.",
-        ],
-        x,
-        y,
-        390,
-    )
-
-    monitor_x = x + 420
-    card(monitor_x, page_height - 390, 360, 164, fill=colors.white)
-    set_font(13, bold=True, color=teal)
-    c.drawString(monitor_x + 16, page_height - 250, "Сетевой монитор")
+    draw_screenshot(NETWORK_DENSE_IMAGE, x2, 92, 198, 124)
+    set_font(8.2, color=muted)
+    c.drawCentredString(x2 + 99, 78, "Плотная сеть: приоритет активных узлов")
+    card(x, 64, 500, 54, fill=light_red)
+    set_font(10.5, bold=True, color=red)
+    c.drawString(x + 12, 98, "Завершение процессов")
     draw_wrapped(
-        "В одном окне объединены таблица пакетов Wireshark-подобного вида, вывод Nmap, "
-        "схема узлов, ИБ-анализ и журнал выполнения. Итоговые сетевые данные сохраняются "
-        "в HTML-отчёте; пакеты свёрнуты и раскрываются по запросу.",
-        monitor_x + 16,
-        page_height - 274,
-        328,
-        size=10,
-        leading=13.5,
-    )
-    pill("Пакеты", monitor_x + 16, page_height - 365, light_blue, color=blue)
-    pill("Nmap", monitor_x + 94, page_height - 365, light_teal, color=teal)
-    pill("ИБ-события", monitor_x + 162, page_height - 365, light_amber, color=amber)
-
-    y = 126
-    card(x, y, page_width - margin * 2, 82, fill=light_red)
-    set_font(13, bold=True, color=red)
-    c.drawString(x + 16, y + 56, "Завершение и устойчивость")
-    draw_wrapped(
-        "При закрытии программы завершаются только запущенные ею процессы Nmap, tshark и dumpcap, "
-        "включая дочернее дерево. Для проверки только ноутбука из CLI используйте: "
-        "python run_audit.py --network-scan --offline --no-open",
-        x + 16,
-        y + 36,
-        page_width - margin * 2 - 32,
-        size=10,
-        leading=13,
+        "При закрытии завершаются только запущенные приложением Nmap, tshark и dumpcap. CLI: python run_audit.py --network-scan --offline --no-open",
+        x + 12,
+        82,
+        476,
+        size=8.2,
+        leading=10,
     )
     c.showPage()
 
@@ -899,7 +873,7 @@ def build_pdf(output_path: str | Path) -> Path:
     set_font(13, bold=True, color=green)
     c.drawString(x + 16, y - 24, "Можно публиковать")
     bullet_list(
-        ["src, tests, scripts", "README, LICENSE, SECURITY", "docs/images и этот PDF", "GitHub Actions workflow"],
+        ["src, tests, scripts", "README, LICENSE, SECURITY", "безопасные тестовые скриншоты и этот PDF", "GitHub Actions workflow"],
         x + 16,
         y - 48,
         safe_w - 32,
@@ -908,7 +882,7 @@ def build_pdf(output_path: str | Path) -> Path:
     set_font(13, bold=True, color=red)
     c.drawString(x + 416, y - 24, "Оставить локально")
     bullet_list(
-        ["outputs и локальные HTML-отчёты", "SQLite-базы аудита", "EXE/ZIP, если внутри реальные результаты", "логи с пользователями, путями, IP"],
+        ["outputs и локальные HTML-отчёты", "SQLite-базы аудита", "скриншоты реальных интерфейсов и IP", "логи с пользователями, путями, IP"],
         x + 416,
         y - 48,
         safe_w - 32,
@@ -954,9 +928,9 @@ def build_pdf(output_path: str | Path) -> Path:
     set_font(13, bold=True, color=amber)
     c.drawString(x + 16, y - 24, "Важно про PyInstaller")
     draw_wrapped(
-        "Используйте готовый build\\pyinstaller\\IBAuditWorkstation.spec. Он добавляет rulepacks JSON и локальные "
-        "tools\\nmap, tools\\wireshark, tools\\npcap. Каталог tools не публикуется в Git. "
-        "Если регенерировать spec через --name и --specpath, приложение может не найти windows_base.json.",
+        "Используйте готовый build\\pyinstaller\\IBAuditWorkstation.spec. Он добавляет rulepacks, ресурсы CustomTkinter "
+        "и локальные архивы tools\\nmap и tools\\wireshark. Драйвер Npcap не распространяется внутри EXE: при его отсутствии программа предлагает официальный установщик. "
+        "Каталог tools и результаты аудита не публикуются в Git.",
         x + 16,
         y - 44,
         table_w - 32,

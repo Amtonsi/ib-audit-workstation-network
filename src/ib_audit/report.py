@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .design_system import REPORT_THEME_STYLE
+
 import html
 import json
 import re
@@ -70,6 +72,11 @@ class HtmlReportBuilder:
             obj for obj in inventory
             if obj.object_type in {"network_service", "network_capture"}
         ]
+        if network_objects:
+            ordered = [
+                category for category in ordered
+                if self._anchor(category) != "s-network-intelligence"
+            ]
 
         nav = ["Сводка рисков", "Уязвимости", "План устранения", "Покрытие", *ordered, "Диагностика сбора"]
         if network_objects:
@@ -1303,7 +1310,7 @@ td,th{border:1px solid #e5e7eb;padding:8px;text-align:left;vertical-align:top;ov
 .legend-endpoint{background:#d1fae5;color:#065f46}
 .legend-external{background:#fee2e2;color:#991b1b}
 @media(max-width:820px){aside{position:static;width:auto}main{margin:0;padding:12px}}
-</style>"""
+</style>""" + REPORT_THEME_STYLE
 
     @staticmethod
     def _script() -> str:

@@ -23,6 +23,28 @@ from ib_audit.network_scan import (
 
 
 class NetworkScanParserTests(unittest.TestCase):
+    def test_nmap_open_only_uses_valid_long_option(self):
+        command = build_nmap_command(
+            NetworkScanConfig(enabled=True, nmap_open_only=True),
+            ["127.0.0.1"],
+        )
+
+        self.assertIn("--open", command)
+        self.assertNotIn("-open", command)
+
+    def test_nmap_parser_accepts_standard_nmap_doctype_and_unknown_service(self):
+        raw = """<?xml version='1.0'?>
+<!DOCTYPE nmaprun>
+<nmaprun><host><status state='up'/><address addr='127.0.0.1' addrtype='ipv4'/>
+<ports><port protocol='tcp' portid='54321'><state state='open'/>
+<service name='unknown' method='table'/></port></ports></host></nmaprun>"""
+
+        services = _parse_nmap_xml(raw)
+
+        self.assertEqual(1, len(services))
+        self.assertEqual("54321", services[0].fields["Port"])
+        self.assertEqual("unknown", services[0].fields["Service"])
+
     def test_nmap_command_builder_respects_enabled_options(self):
         config = NetworkScanConfig(
             enabled=True,
