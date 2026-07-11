@@ -183,7 +183,7 @@ tr:hover td{background:#f2f8f7}
   color:var(--teal-dark)!important;
   background:linear-gradient(90deg,#e9f8f4,#eff6ff 58%,#ecfeff)!important;
 }
-.network-map-svg{background:#f4f9f8!important}
+.network-map-svg{background:#f8fafc!important}
 .network-map-bg{fill:#f4f9f8!important}
 .network-map-grid{stroke:rgba(71,85,105,.12)!important}
 .network-packet-report{padding:16px!important;background:#fbfdfd!important}

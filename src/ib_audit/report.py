@@ -496,7 +496,7 @@ class HtmlReportBuilder:
                 "<p class='muted'>Сеть еще не распознана. Запустите сетевую проверку с захватом трафика.</p></div>"
             )
         rows = []
-        for node in nodes[:16]:
+        for node in nodes:
             if not isinstance(node, dict):
                 continue
             role = str(node.get("role") or "Endpoint")
@@ -512,105 +512,206 @@ class HtmlReportBuilder:
                 "</tr>"
             )
         return (
-            "<div class='network-map-panel'>"
-            "<h3>Схема сети и узлы</h3>"
-            f"{self._network_topology_svg(topology)}"
+            "<div class='network-map-panel' style='border:1px solid #DCE5E7;border-radius:12px;overflow:hidden;background:#FFFFFF;margin:16px 0;box-shadow:none'>"
+            "<h3 style='margin:0;padding:12px 14px;background:#FFFFFF;color:#0F172A;font-size:13px;border-bottom:1px solid #E2E8F0'>Схема сети и узлы</h3>"
+            "<div class='network-map-toolbar' style='display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 14px;background:#F8FAFC;color:#475569;font-size:12px'>"
+            f"<span>Векторная схема · отображены все узлы: {len(nodes)}</span>"
+            "<span class='network-map-zoom' style='display:inline-flex;gap:4px'>"
+            "<button type='button' style='min-width:32px;padding:4px 8px;border:1px solid #CBD5E1;border-radius:7px;background:#FFFFFF;color:#0F172A;cursor:pointer' title='Уменьшить' onclick=\"var s=this.closest('.network-map-panel').querySelector('.network-map-svg');var z=Math.max(.5,parseFloat(s.dataset.zoom||'1')/1.25);s.dataset.zoom=z;s.style.width=(z*100)+'%'\">−</button>"
+            "<button type='button' style='min-width:54px;padding:4px 8px;border:1px solid #CBD5E1;border-radius:7px;background:#FFFFFF;color:#0F172A;cursor:pointer' title='По размеру окна' onclick=\"var s=this.closest('.network-map-panel').querySelector('.network-map-svg');s.dataset.zoom='1';s.style.width='100%'\">100%</button>"
+            "<button type='button' style='min-width:32px;padding:4px 8px;border:1px solid #CBD5E1;border-radius:7px;background:#FFFFFF;color:#0F172A;cursor:pointer' title='Увеличить' onclick=\"var s=this.closest('.network-map-panel').querySelector('.network-map-svg');var z=Math.min(4,parseFloat(s.dataset.zoom||'1')*1.25);s.dataset.zoom=z;s.style.width=(z*100)+'%'\">+</button>"
+            "</span></div>"
+            f"<div class='network-map-viewport' style='overflow:auto;background:#F8FAFC'>{self._network_topology_svg(topology)}</div>"
             "<table class='network-node-table'><thead><tr><th>Роль</th><th>Адрес</th><th>Риск</th></tr></thead>"
             f"<tbody>{''.join(rows)}</tbody></table>"
             "</div>"
         )
 
     def _network_topology_svg(self, topology: dict[str, object]) -> str:
+        from .network_topology_layout import (
+            SEVERITY_RANK,
+            TOPOLOGY_PALETTE,
+            TOPOLOGY_ROLE_LABELS,
+            build_topology_layout,
+            normalize_topology_severity,
+            short_topology_label,
+            topology_vector_size,
+        )
+
         nodes_raw = topology.get("nodes", []) if isinstance(topology, dict) else []
         edges_raw = topology.get("edges", []) if isinstance(topology, dict) else []
-        nodes = [node for node in nodes_raw if isinstance(node, dict)][:12]
+        nodes = [dict(node) for node in nodes_raw if isinstance(node, dict)]
         if not nodes:
             return ""
+
         center = max(
             nodes,
             key=lambda node: (
+                1200
+                if bool(node.get("is_local"))
+                and (self._to_int(node.get("neighbor_count")) + self._to_int(node.get("packets")))
+                else 0,
+                400
+                if str(node.get("scope") or "") in {"private", "loopback", "link-local"}
+                and (self._to_int(node.get("neighbor_count")) + self._to_int(node.get("packets")))
+                else 0,
+                self._to_int(node.get("neighbor_count")) * 100
+                + self._to_int(node.get("source_packets")) * 4
+                + self._to_int(node.get("packets")),
                 self._to_int(node.get("neighbor_count")),
-                self._to_int(node.get("bytes")),
                 self._to_int(node.get("packets")),
+                str(node.get("id") or node.get("ip") or ""),
             ),
         )
-        center_id = str(center.get("id") or center.get("ip"))
-        positions: dict[str, tuple[int, int]] = {center_id: (610, 118)}
-        slots = [
-            (160, 56), (330, 56), (500, 56), (705, 56), (875, 56), (1045, 56),
-            (110, 148), (280, 148), (455, 148), (745, 148), (920, 148), (1080, 148),
-        ]
-        slot_index = 0
-        for node in nodes:
-            node_id = str(node.get("id") or node.get("ip"))
-            if node_id == center_id:
-                continue
-            positions[node_id] = slots[slot_index % len(slots)]
-            slot_index += 1
+        center_id = str(center.get("id") or center.get("ip") or "")
 
-        edge_svg = []
-        rendered_edges: set[tuple[str, str, str]] = set()
+        edge_map: dict[tuple[str, str], dict[str, object]] = {}
         for edge in edges_raw:
             if not isinstance(edge, dict):
                 continue
             source = str(edge.get("source") or "")
             target = str(edge.get("target") or "")
+            if not source or not target or source == target:
+                continue
+            key = tuple(sorted((source, target), key=str.casefold))
+            relationship = edge_map.setdefault(
+                key,
+                {
+                    "source": source,
+                    "target": target,
+                    "protocols": set(),
+                    "severity": "INFO",
+                    "packets": 0,
+                },
+            )
+            protocol = str(edge.get("protocol") or "UNKNOWN").strip().upper() or "UNKNOWN"
+            relationship["protocols"].add(protocol)  # type: ignore[union-attr]
+            relationship["packets"] = self._to_int(relationship.get("packets")) + self._to_int(
+                edge.get("packets"), 1
+            )
+            candidate = normalize_topology_severity(edge.get("severity"))
+            current = normalize_topology_severity(relationship.get("severity"))
+            if SEVERITY_RANK[candidate] > SEVERITY_RANK[current]:
+                relationship["severity"] = candidate
+
+        node_by_id = {str(node.get("id") or node.get("ip") or ""): node for node in nodes}
+        for node in nodes:
+            node["degree"] = 0
+            node["protocols"] = set()
+            node["severity"] = "INFO"
+        for relationship in edge_map.values():
+            severity = normalize_topology_severity(relationship.get("severity"))
+            protocols = set(relationship.get("protocols") or set())
+            for node_id in (str(relationship["source"]), str(relationship["target"])):
+                node = node_by_id.get(node_id)
+                if node is None:
+                    continue
+                node["degree"] = self._to_int(node.get("degree")) + 1
+                node["protocols"] = set(node.get("protocols") or set()) | protocols
+                if SEVERITY_RANK[severity] > SEVERITY_RANK[normalize_topology_severity(node.get("severity"))]:
+                    node["severity"] = severity
+
+        for node in nodes:
+            node_id = str(node.get("id") or node.get("ip") or "")
+            source_role = str(node.get("role") or "").casefold()
+            scope = str(node.get("scope") or "")
+            severity = normalize_topology_severity(node.get("severity"))
+            protocols = {str(item).upper() for item in set(node.get("protocols") or set())}
+            if node_id == center_id:
+                role = "local"
+            elif severity in {"HIGH", "CRITICAL"}:
+                role = "risk"
+            elif self._to_int(node.get("service_count")) > 0:
+                role = "service"
+            elif node_id != center_id and protocols & {"DNS", "MDNS", "LLMNR", "NBNS"}:
+                role = "dns"
+            elif any(marker in source_role for marker in ("gateway", "router", "switch")):
+                role = "gateway"
+            elif scope == "loopback":
+                role = "loopback"
+            elif scope == "external" or "external" in source_role:
+                role = "external"
+            else:
+                role = "endpoint"
+            node["role"] = role
+
+        width, height = topology_vector_size(len(nodes))
+        graph = {
+            "nodes": nodes,
+            "edges": list(edge_map.values()),
+            "center": center_id,
+            "packet_count": self._to_int((topology.get("summary") or {}).get("total_packets")),
+        }
+        layout = build_topology_layout(graph, width=width, height=height, include_all=True)
+        positions = dict(layout["positions"])
+        visible_edges = list(layout["edges"])
+        scale = float(layout["scale"])
+
+        edge_svg: list[str] = []
+        show_edge_labels = len(visible_edges) <= 11
+        for edge in visible_edges:
+            source = str(edge.get("source") or "")
+            target = str(edge.get("target") or "")
             if source not in positions or target not in positions:
                 continue
-            protocol = str(edge.get("protocol") or "UNKNOWN")
-            key = (source, target, protocol)
-            if key in rendered_edges:
-                continue
-            rendered_edges.add(key)
             x1, y1 = positions[source]
             x2, y2 = positions[target]
-            severity = self._traffic_severity_class(edge.get("severity"))
+            severity = normalize_topology_severity(edge.get("severity"))
+            packets = self._to_int(edge.get("packets"))
+            protocols = sorted(str(item) for item in set(edge.get("protocols") or set()))
+            color = "#FB7185" if severity in {"HIGH", "CRITICAL"} else "#F59E0B" if severity == "MEDIUM" else "#60A5FA"
+            line_width = 1 + min(3, packets // 25)
             edge_svg.append(
-                f"<line class='network-map-edge {html.escape(severity)} {html.escape(self._protocol_class(protocol))}' "
-                f"x1='{x1}' y1='{y1}' x2='{x2}' y2='{y2}' />"
+                f"<line class='network-map-edge' x1='{x1:.2f}' y1='{y1:.2f}' x2='{x2:.2f}' y2='{y2:.2f}' "
+                f"style='stroke:{color};stroke-width:{line_width};stroke-dasharray:5 4;opacity:1;filter:none' "
+                "vector-effect='non-scaling-stroke' />"
             )
-        if not edge_svg:
-            for node_id, (x2, y2) in positions.items():
-                if node_id == center_id:
-                    continue
+            if show_edge_labels and protocols:
+                label = "/".join(protocols[:2])
+                if packets > 1:
+                    label = f"{label} · {packets}"
                 edge_svg.append(
-                    f"<line class='network-map-edge info' x1='610' y1='118' x2='{x2}' y2='{y2}' />"
+                    f"<text class='network-map-edge-label' x='{(x1 + x2) / 2:.2f}' "
+                    f"y='{(y1 + y2) / 2 - 7 * scale:.2f}' "
+                    "style='fill:#64748B;stroke:#F8FAFC;stroke-width:3px;paint-order:stroke;"
+                    f"font-family:Segoe UI,Arial,sans-serif;font-size:{max(6, round(7 * scale))}px;text-anchor:middle'>{html.escape(label)}</text>"
                 )
 
-        node_svg = []
-        for node in nodes:
-            node_id = str(node.get("id") or node.get("ip"))
-            x, y = positions.get(node_id, (610, 118))
-            label = str(node.get("ip") or node.get("label") or node_id)
-            role = str(node.get("role") or "Endpoint")
-            scope = str(node.get("scope") or "")
-            node_class = "central" if node_id == center_id else self._role_class(role, scope)
-            node_role = self._safe_name(role.replace(" (estimated)", ""))
+        node_svg: list[str] = []
+        for node in layout["nodes"]:
+            node_id = str(node.get("id") or node.get("ip") or "")
+            x, y = positions[node_id]
+            role = str(node.get("role") or "endpoint")
+            fill, outline, text_color = TOPOLOGY_PALETTE.get(role, TOPOLOGY_PALETTE["endpoint"])
+            display = short_topology_label(node.get("ip") or node.get("label") or node_id, 24)
+            role_label = TOPOLOGY_ROLE_LABELS.get(role, "УЗЕЛ")
+            longest_line = max(len(role_label), len(display))
+            node_width = min(152 * scale, max(82 * scale, (longest_line * 6 + 24) * scale))
+            node_height = (45 if node_id == center_id else 39) * scale
+            font_size = max(6, round((8 if node_id == center_id else 7) * scale))
             node_svg.append(
-                f"<g class='network-map-node {html.escape(node_class)}'>"
-                f"<ellipse cx='{x}' cy='{y}' rx='70' ry='30' />"
-                f"<text class='network-map-label' x='{x}' y='{y - 2}'>{html.escape(self._safe_name(label))}</text>"
-                f"<text class='network-map-role' x='{x}' y='{y + 15}'>{html.escape(node_role)}</text>"
+                f"<g class='network-map-node {html.escape(role)}' style='--node-fill:{fill};--node-stroke:{outline};--node-text:{text_color}'>"
+                f"<ellipse cx='{x:.2f}' cy='{y:.2f}' rx='{node_width / 2:.2f}' ry='{node_height / 2:.2f}' "
+                f"style='fill:{fill};stroke:{outline};stroke-width:{3 if node_id == center_id else 1};filter:none' vector-effect='non-scaling-stroke' />"
+                f"<text class='network-map-role' x='{x:.2f}' y='{y - font_size * 0.55:.2f}' "
+                f"style='fill:{text_color};stroke:none;font-size:{font_size}px;font-weight:600;letter-spacing:0;text-transform:none'>{html.escape(role_label)}</text>"
+                f"<text class='network-map-label' x='{x:.2f}' y='{y + font_size * 0.85:.2f}' "
+                f"style='fill:{text_color};stroke:none;font-size:{font_size}px;font-weight:600'>{html.escape(display)}</text>"
                 "</g>"
             )
+
+        summary = topology.get("summary", {}) if isinstance(topology, dict) else {}
+        packet_count = self._to_int(summary.get("total_packets")) if isinstance(summary, dict) else 0
+        summary_text = f"{len(nodes)} узлов · {len(edge_map)} связей · {packet_count} пакетов"
         return (
-            "<svg class='network-map-svg' viewBox='0 0 1200 210' role='img' "
-            "aria-label='Network topology model'>"
-            "<defs>"
-            "<radialGradient id='networkMapBg' cx='50%' cy='42%' r='78%'>"
-            "<stop offset='0%' stop-color='#ffffff'/><stop offset='46%' stop-color='#e0f2fe'/>"
-            "<stop offset='100%' stop-color='#cbd5e1'/></radialGradient>"
-            "<linearGradient id='nodeEndpoint' x1='0%' x2='100%'><stop offset='0%' stop-color='#16a34a'/><stop offset='100%' stop-color='#047857'/></linearGradient>"
-            "<linearGradient id='nodeCentral' x1='0%' x2='100%'><stop offset='0%' stop-color='#38bdf8'/><stop offset='100%' stop-color='#2563eb'/></linearGradient>"
-            "<linearGradient id='nodeExternal' x1='0%' x2='100%'><stop offset='0%' stop-color='#ef4444'/><stop offset='100%' stop-color='#991b1b'/></linearGradient>"
-            "<linearGradient id='nodeAmber' x1='0%' x2='100%'><stop offset='0%' stop-color='#f59e0b'/><stop offset='100%' stop-color='#92400e'/></linearGradient>"
-            "<filter id='nodeGlow' x='-40%' y='-60%' width='180%' height='220%'><feGaussianBlur stdDeviation='4' result='blur'/><feMerge><feMergeNode in='blur'/><feMergeNode in='SourceGraphic'/></feMerge></filter>"
-            "<filter id='linkGlow' x='-20%' y='-40%' width='140%' height='180%'><feGaussianBlur stdDeviation='1.8' result='blur'/><feMerge><feMergeNode in='blur'/><feMergeNode in='SourceGraphic'/></feMerge></filter>"
-            "</defs>"
-            "<rect class='network-map-bg' x='0' y='0' width='1200' height='210' />"
-            "<path class='network-map-grid' d='M0 42H1200M0 84H1200M0 126H1200M0 168H1200M120 0V210M240 0V210M360 0V210M480 0V210M600 0V210M720 0V210M840 0V210M960 0V210M1080 0V210' />"
+            f"<svg class='network-map-svg' data-zoom='1' viewBox='0 0 {width} {height}' style='display:block;width:100%;height:auto;margin:0 auto;background:#F8FAFC' "
+            "preserveAspectRatio='xMidYMid meet' role='img' aria-label='Схема сети и узлы' "
+            "shape-rendering='geometricPrecision' text-rendering='geometricPrecision'>"
+            f"<title>{html.escape(summary_text)}</title>"
+            f"<rect x='0' y='0' width='{width}' height='{height}' fill='#F8FAFC' />"
             + "".join(edge_svg)
             + "".join(node_svg)
+            + f"<text class='network-map-summary' x='14' y='20' style='fill:#475569;font-family:Segoe UI,Arial,sans-serif;font-size:8px;font-weight:600'>{html.escape(summary_text)}</text>"
             + "</svg>"
         )
 
@@ -756,17 +857,38 @@ class HtmlReportBuilder:
         flows: list[InventoryObject],
         adapters: list[InventoryObject],
     ) -> dict[str, object]:
+        import ipaddress
+
         gateway_ips: set[str] = set()
         local_ips: set[str] = set()
 
+        def _parse_network_address(value: object) -> str | None:
+            ipv4 = self._parse_ipv4(value)
+            if ipv4:
+                return ipv4
+            text = str(value or "").strip()
+            if not text:
+                return None
+            if text.startswith("[") and "]" in text:
+                text = text[1 : text.index("]")]
+            else:
+                text = text.split()[0].strip(",;()")
+            text = text.split("%", 1)[0]
+            try:
+                address = ipaddress.ip_address(text)
+            except ValueError:
+                return None
+            return str(address)
+
         def _infer_subnet(value: str) -> str:
-            parsed = self._parse_ipv4(value)
+            parsed = _parse_network_address(value)
             if not parsed:
                 return "unknown"
             try:
-                parts = parsed.split(".")
-                return ".".join(parts[:3])
-            except Exception:
+                address = ipaddress.ip_address(parsed)
+                prefix = 24 if address.version == 4 else 64
+                return str(ipaddress.ip_network(f"{address}/{prefix}", strict=False).network_address)
+            except ValueError:
                 return "unknown"
 
         def _infer_node_role(
@@ -803,18 +925,18 @@ class HtmlReportBuilder:
 
         for adapter in adapters:
             for item in self._split_values(str(adapter.fields.get("Default Gateways", ""))):
-                parsed = self._parse_ipv4(item)
+                parsed = _parse_network_address(item)
                 if parsed:
                     gateway_ips.add(parsed)
             for item in self._split_values(str(adapter.fields.get("IP Addresses", ""))):
-                parsed = self._parse_ipv4(item)
+                parsed = _parse_network_address(item)
                 if parsed:
                     local_ips.add(parsed)
 
         service_count: dict[str, int] = defaultdict(int)
         service_name: dict[str, str] = {}
         for service in services:
-            host = self._parse_ipv4(service.fields.get("Host IP"))
+            host = _parse_network_address(service.fields.get("Host IP"))
             if not host:
                 continue
             service_count[host] += 1
@@ -833,6 +955,7 @@ class HtmlReportBuilder:
                     "label": service_name.get(ip, ip),
                     "scope": self._ip_scope(ip),
                     "packets": 0,
+                    "source_packets": 0,
                     "bytes": 0,
                     "service_count": 0,
                     "neighbors": set(),
@@ -843,6 +966,9 @@ class HtmlReportBuilder:
             )
             return node
 
+        for discovered_ip in sorted(local_ips | gateway_ips):
+            make_node(discovered_ip)
+
         edges_map: dict[tuple[str, str, str], dict[str, object]] = {}
         protocol_summary: defaultdict[str, dict[str, int]] = defaultdict(lambda: {"packets": 0, "bytes": 0})
         app_summary: dict[str, int] = defaultdict(int)
@@ -851,8 +977,8 @@ class HtmlReportBuilder:
 
         for flow in flows:
             fields = flow.fields
-            source = self._parse_ipv4(fields.get("Source"))
-            destination = self._parse_ipv4(fields.get("Destination"))
+            source = _parse_network_address(fields.get("Source"))
+            destination = _parse_network_address(fields.get("Destination"))
             if not source or not destination:
                 continue
             packets = self._to_int(fields.get("Packets"), 0)
@@ -869,6 +995,7 @@ class HtmlReportBuilder:
             destination_node = make_node(destination)
 
             source_node["packets"] = self._to_int(source_node.get("packets")) + packets
+            source_node["source_packets"] = self._to_int(source_node.get("source_packets")) + packets
             source_node["bytes"] = self._to_int(source_node.get("bytes")) + bytes_total
             destination_node["packets"] = self._to_int(destination_node.get("packets")) + packets
             destination_node["bytes"] = self._to_int(destination_node.get("bytes")) + bytes_total
@@ -948,6 +1075,7 @@ class HtmlReportBuilder:
             safe_node["apps"] = ", ".join([str(item) for item in safe_node["apps"]])  # type: ignore[index]
             safe_node["role"] = str(safe_node.get("role") or "Endpoint")
             safe_node["ip"] = str(safe_node.get("id"))
+            safe_node["is_local"] = str(safe_node.get("id")) in local_ips
             if safe_node.get("label") != safe_node.get("ip"):
                 safe_node["label"] = f"{safe_node.get('label', '')} [{safe_node.get('ip')}]"
             topology_nodes.append(safe_node)

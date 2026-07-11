@@ -985,6 +985,16 @@ class AuditWindow:
         self.vulnerability_source_selector.pack(fill=X, padx=12, pady=(0, 10))
         rail_footer = ctk.CTkFrame(rail, fg_color="transparent")
         rail_footer.pack(side="bottom", fill=X, padx=16, pady=16)
+        self.developer_credit = ctk.CTkLabel(
+            rail_footer,
+            text="Разработал: Абдрахманов Амаль Даулетович",
+            text_color="#9AA8AD",
+            font=("Segoe UI", 8),
+            justify="left",
+            anchor="w",
+            wraplength=150,
+        )
+        self.developer_credit.pack(fill=X, pady=(0, 8))
         self.rail_note = ctk.CTkLabel(
             rail_footer, text="Все результаты сохраняются\nлокально на компьютере",
             text_color=p["muted"], font=("Segoe UI", 8), justify="left", anchor="w",
@@ -1197,6 +1207,14 @@ class AuditWindow:
         ).pack(anchor="w", pady=(6, 0))
         rail_footer = ttk.Frame(rail, style="ReferenceRail.TFrame")
         rail_footer.pack(side="bottom", fill=X)
+        self.developer_credit = ttk.Label(
+            rail_footer,
+            text="Разработал: Абдрахманов Амаль Даулетович",
+            style="ReferenceSection.TLabel",
+            justify="left",
+            wraplength=150,
+        )
+        self.developer_credit.pack(anchor="w", pady=(0, 8))
         self.rail_note = ttk.Label(
             rail_footer,
             text="Все результаты сохраняются\nлокально на компьютере",
@@ -3686,7 +3704,11 @@ class AuditWindow:
         return text if len(text) <= limit else f"{text[: limit - 1]}…"
 
     def _render_reference_live_topology(self) -> None:
-        from math import cos, pi, sin
+        from .network_topology_layout import (
+            TOPOLOGY_PALETTE,
+            TOPOLOGY_ROLE_LABELS,
+            build_topology_layout,
+        )
 
         canvas = getattr(self, "_network_topology_canvas", None) or getattr(self, "_network_live_canvas", None)
         if canvas is None or not canvas.winfo_exists():
@@ -3710,83 +3732,16 @@ class AuditWindow:
             )
             return
 
-        severity_rank = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
-        center_id = str(graph["center"])
-        density_capacity = max(7, min(31, int(width / 105) * max(1, int(height / 90))))
-
-        def node_priority(node: dict[str, object]) -> tuple[int, int, int, int, str]:
-            return (
-                1 if str(node["id"]) == center_id else 0,
-                severity_rank[self._network_live_topology_severity(node["severity"])],
-                int(node["degree"]),
-                int(node["packets"]),
-                str(node["id"]),
-            )
-
-        ordered_nodes = sorted(all_nodes, key=node_priority, reverse=True)
-        visible_nodes = ordered_nodes[:density_capacity]
-        if center_id not in {str(node["id"]) for node in visible_nodes}:
-            visible_nodes[-1] = next(node for node in all_nodes if str(node["id"]) == center_id)
-        visible_ids = {str(node["id"]) for node in visible_nodes}
-        hidden_count = max(0, len(all_nodes) - len(visible_nodes))
-        visible_edges = [
-            edge
-            for edge in all_edges
-            if str(edge["source"]) in visible_ids and str(edge["target"]) in visible_ids
-        ]
-
-        scale = max(0.68, min(1.18, min(width / 760, height / 285)))
-        if len(visible_nodes) > 18:
-            scale *= 0.76
-        elif len(visible_nodes) > 10:
-            scale *= 0.87
-        center_x = width * 0.46
-        center_y = height * 0.53
-        positions: dict[str, tuple[float, float]] = {center_id: (center_x, center_y)}
-        satellites = [node for node in visible_nodes if str(node["id"]) != center_id]
-        rings: list[list[dict[str, object]]] = []
-        first_ring_size = min(8, len(satellites))
-        if first_ring_size:
-            rings.append(satellites[:first_ring_size])
-        if len(satellites) > first_ring_size:
-            rings.append(satellites[first_ring_size:])
-        for ring_index, ring in enumerate(rings):
-            radius_x = min(width * (0.29 + ring_index * 0.16), width / 2 - 66 * scale)
-            radius_y = min(height * (0.31 + ring_index * 0.13), height / 2 - 28 * scale)
-            radius_x = max(radius_x, 120 * scale)
-            radius_y = max(radius_y, 56 * scale)
-            angle_offset = -pi / 2 + (pi / max(len(ring), 1) if ring_index else 0)
-            for index, node in enumerate(ring):
-                angle = angle_offset + 2 * pi * index / max(len(ring), 1)
-                x = center_x + radius_x * cos(angle)
-                y = center_y + radius_y * sin(angle)
-                positions[str(node["id"])] = (
-                    min(width - 82 * scale, max(82 * scale, x)),
-                    min(height - 34 * scale, max(42 * scale, y)),
-                )
-
-        palette = {
-            "local": ("#2563EB", "#93C5FD", "#FFFFFF"),
-            "gateway": ("#DCFCE7", "#4ADE80", "#166534"),
-            "service": ("#FFF7D6", "#F6C453", "#92400E"),
-            "dns": ("#E6F9FE", "#38BDF8", "#075985"),
-            "adapter": ("#F1F5F9", "#94A3B8", "#334155"),
-            "loopback": ("#F1F5F9", "#94A3B8", "#334155"),
-            "risk": ("#FFE4E6", "#FB7185", "#BE123C"),
-            "external": ("#ECFEFF", "#2DD4BF", "#115E59"),
-            "endpoint": ("#EFF6FF", "#93C5FD", "#1E3A8A"),
-        }
-        role_labels = {
-            "local": "ЛОКАЛЬНЫЙ УЗЕЛ",
-            "gateway": "ШЛЮЗ",
-            "service": "СЕРВИС",
-            "dns": "DNS",
-            "adapter": "ИНТЕРФЕЙС",
-            "loopback": "ЛОКАЛЬНАЯ ЦЕЛЬ",
-            "risk": "РИСК",
-            "external": "ВНЕШНИЙ УЗЕЛ",
-            "endpoint": "УЗЕЛ",
-        }
+        layout = build_topology_layout(graph, width=width, height=height, include_all=False)
+        center_id = str(layout["center"])
+        visible_nodes = list(layout["nodes"])
+        visible_edges = list(layout["edges"])
+        positions = dict(layout["positions"])
+        hidden_count = int(layout["hidden_count"])
+        scale = float(layout["scale"])
+        center_x, center_y = positions[center_id]
+        palette = TOPOLOGY_PALETTE
+        role_labels = TOPOLOGY_ROLE_LABELS
 
         for edge in visible_edges:
             source_id = str(edge["source"])
