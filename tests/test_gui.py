@@ -246,6 +246,18 @@ class AuditWindowReportImportTests(unittest.TestCase):
         self.assertEqual(100, window.progress.options["value"])
         self.assertFalse(window.progress.started)
 
+    def test_drain_messages_yields_after_bounded_batch(self):
+        window = self._window()
+        window.root = FakeWidget()
+        window.root.after = Mock()
+        for index in range(70):
+            window.messages.put(f"Audit event {index}")
+
+        window._drain_messages()
+
+        self.assertEqual(6, window.messages.qsize())
+        window.root.after.assert_called_once_with(10, window._drain_messages)
+
     def test_batch_progress_updates_document_status_and_percentage(self):
         window = self._window()
         window.root = FakeWidget()
@@ -268,6 +280,7 @@ class AuditWindowReportImportTests(unittest.TestCase):
         window.source_status = FakeVar("кэш источников: проверяется при аудите")
         window.progress_status = FakeVar("Прогресс: ожидание")
         window.vulnerability_mode = FakeVar("full")
+        window.vulnerability_source_mode = FakeVar("auto")
         window.status = FakeVar()
         window.action_buttons = []
         window.active_cancel_token = None
@@ -410,6 +423,16 @@ class AuditWindowReportImportTests(unittest.TestCase):
         window.vulnerability_mode.set("unexpected")
         self.assertEqual("full", window._selected_vulnerability_mode())
 
+    def test_selected_vulnerability_source_mode_supports_explicit_modes(self):
+        window = self._window()
+        self.assertEqual("auto", window._selected_vulnerability_source_mode())
+
+        window.vulnerability_source_mode = FakeVar("local")
+        self.assertEqual("local", window._selected_vulnerability_source_mode())
+
+        window.vulnerability_source_mode.set("Только онлайн")
+        self.assertEqual("online", window._selected_vulnerability_source_mode())
+
     @patch("ib_audit.gui_tk.threading.Thread")
     @patch(
         "ib_audit.gui_tk.filedialog.askopenfilenames",
@@ -445,7 +468,7 @@ class AuditWindowReportImportTests(unittest.TestCase):
 
         thread_factory.assert_called_once_with(
             target=window._run_background,
-            args=(True, "fast", window.active_cancel_token),
+            args=(True, "fast", window.active_cancel_token, None, False, "auto"),
             daemon=True,
         )
         thread.start.assert_called_once()

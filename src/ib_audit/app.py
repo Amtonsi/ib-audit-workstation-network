@@ -39,6 +39,21 @@ from .network_scan import NetworkScanConfig
 VULNERABILITY_MODE_FULL = "full"
 VULNERABILITY_MODE_FAST = "fast"
 VULNERABILITY_MODES = {VULNERABILITY_MODE_FULL, VULNERABILITY_MODE_FAST}
+VULNERABILITY_SOURCE_AUTO = "auto"
+VULNERABILITY_SOURCE_LOCAL = "local"
+VULNERABILITY_SOURCE_ONLINE = "online"
+VULNERABILITY_SOURCE_MODES = {
+    VULNERABILITY_SOURCE_AUTO,
+    VULNERABILITY_SOURCE_LOCAL,
+    VULNERABILITY_SOURCE_ONLINE,
+}
+
+ONLINE_NVD_QUERY_LIMIT = 6
+ONLINE_SOURCE_TIMEOUT_SECONDS = 10
+ONLINE_FSTEC_QUERY_LIMIT = 1
+ONLINE_FSTEC_PAGE_LIMIT = 1
+ONLINE_FSTEC_DETAIL_LIMIT = 2
+ONLINE_FSTEC_TIMEOUT_SECONDS = 6
 FSTEC_BDU_XLSX_URL = "https://bdu.fstec.ru/files/documents/vullist.xlsx"
 FSTEC_BDU_XLSX_NAMES = {
     "vullist.xlsx",
@@ -59,6 +74,10 @@ def default_output_dir() -> Path:
 
 def normalize_vulnerability_mode(mode: str | None) -> str:
     return mode if mode in VULNERABILITY_MODES else VULNERABILITY_MODE_FULL
+
+
+def normalize_vulnerability_source_mode(mode: str | None) -> str:
+    return mode if mode in VULNERABILITY_SOURCE_MODES else VULNERABILITY_SOURCE_AUTO
 
 
 def update_vulnerability_sources(
@@ -328,20 +347,28 @@ def _create_vulnerability_correlator(
     mode = normalize_vulnerability_mode(vulnerability_mode)
     source_online = online_sources and mode == VULNERABILITY_MODE_FULL
     use_live_fstec = online_sources and mode == VULNERABILITY_MODE_FULL
-    if use_live_fstec:
-        fstec_client = FstecBduClient() if cache is None else FstecBduClient(cache=cache, online=True)
-    else:
-        fstec_client = None
     if vulnerability_db_path:
         return VulnerabilityCorrelator(
-            fstec_client=fstec_client,
             source_client=VulnerabilityDatabaseSourceClient(vulnerability_db_path),
         )
-    if cache is None and source_online:
-        return VulnerabilityCorrelator(fstec_client=fstec_client)
+    fstec_client = None
+    if use_live_fstec:
+        fstec_client = FstecBduClient(
+            cache=cache,
+            online=True,
+            max_queries=ONLINE_FSTEC_QUERY_LIMIT,
+            max_pages=ONLINE_FSTEC_PAGE_LIMIT,
+            max_details_per_query=ONLINE_FSTEC_DETAIL_LIMIT,
+            timeout=ONLINE_FSTEC_TIMEOUT_SECONDS,
+        )
     return VulnerabilityCorrelator(
         fstec_client=fstec_client,
-        source_client=VulnerabilitySourceClient(cache=cache, online=source_online),
+        source_client=VulnerabilitySourceClient(
+            cache=cache,
+            online=source_online,
+            request_timeout=ONLINE_SOURCE_TIMEOUT_SECONDS,
+        ),
+        max_nvd_queries=ONLINE_NVD_QUERY_LIMIT,
     )
 
 
@@ -364,6 +391,7 @@ def run_audit(
     enrich: bool = False,
     online_sources: bool = True,
     vulnerability_mode: str = VULNERABILITY_MODE_FULL,
+    vulnerability_source_mode: str = VULNERABILITY_SOURCE_AUTO,
     network_scan: NetworkScanConfig | None = None,
     network_only: bool = False,
     open_report: bool = False,
@@ -385,12 +413,28 @@ def run_audit(
     run, inventory, diagnostics = engine.run()
     if progress:
         progress("Assessing vulnerabilities, configuration, and exposure")
+    source_mode = normalize_vulnerability_source_mode(vulnerability_source_mode)
+    discovered_vulnerability_db = (
+        find_vulnerability_database(output)
+        or find_vulnerability_database(Path.cwd())
+    )
+    selected_vulnerability_db = (
+        None if source_mode == VULNERABILITY_SOURCE_ONLINE else discovered_vulnerability_db
+    )
+    effective_online_sources = online_sources and source_mode != VULNERABILITY_SOURCE_LOCAL
+    if progress:
+        if selected_vulnerability_db is not None:
+            progress(f"Источник уязвимостей: локальная база {selected_vulnerability_db}")
+        elif source_mode == VULNERABILITY_SOURCE_LOCAL:
+            progress("Источник уязвимостей: локальная база не найдена; используется локальный кэш")
+        else:
+            progress("Источник уязвимостей: ограниченный онлайн-профиль CISA/NVD/ФСТЭК")
     service = AssessmentService(
         _create_vulnerability_correlator(
             SnapshotCache(output / "cache"),
-            online_sources,
+            effective_online_sources,
             vulnerability_mode=vulnerability_mode,
-            vulnerability_db_path=find_vulnerability_database(output) or find_vulnerability_database(Path.cwd()),
+            vulnerability_db_path=selected_vulnerability_db,
         )
     )
     try:

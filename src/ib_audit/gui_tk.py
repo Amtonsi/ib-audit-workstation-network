@@ -17,6 +17,9 @@ import customtkinter as ctk
 from .app import (
     VULNERABILITY_MODE_FAST,
     VULNERABILITY_MODE_FULL,
+    VULNERABILITY_SOURCE_AUTO,
+    VULNERABILITY_SOURCE_LOCAL,
+    VULNERABILITY_SOURCE_ONLINE,
     analyze_reports,
     default_output_dir,
     run_audit,
@@ -40,6 +43,11 @@ SOURCE_LABELS = ("CISA KEV", "NVD", "ФСТЭК БДУ")
 VULNERABILITY_MODE_TEXT = {
     VULNERABILITY_MODE_FULL: "Полный онлайн ФСТЭК",
     VULNERABILITY_MODE_FAST: "Быстро: кэш NVD/CISA",
+}
+VULNERABILITY_SOURCE_TEXT = {
+    VULNERABILITY_SOURCE_AUTO: "Авто: локальная -> онлайн",
+    VULNERABILITY_SOURCE_LOCAL: "Только локальная база",
+    VULNERABILITY_SOURCE_ONLINE: "Только онлайн",
 }
 
 COLORS = dict(APP_COLORS)
@@ -452,6 +460,7 @@ class AuditWindow:
         self.source_status = StringVar(value="кэш источников: проверяется при аудите")
         self.progress_status = StringVar(value="Прогресс: ожидание")
         self.vulnerability_mode = StringVar(value=VULNERABILITY_MODE_FULL)
+        self.vulnerability_source_mode = StringVar(value=VULNERABILITY_SOURCE_AUTO)
         self.network_scan_enabled = BooleanVar(value=True)
         self.network_capture_enabled = BooleanVar(value=True)
         self.network_targets = StringVar(value="127.0.0.1")
@@ -940,7 +949,7 @@ class AuditWindow:
             font=("Segoe UI Semibold", 8), anchor="w",
         ).pack(fill=X, padx=16, pady=(0, 8))
         profile = ctk.CTkFrame(
-            rail, height=74, corner_radius=10, fg_color="#FFFFFF",
+            rail, height=136, corner_radius=10, fg_color="#FFFFFF",
             border_width=1, border_color=p["line"],
         )
         profile.pack(fill=X, padx=12)
@@ -953,6 +962,27 @@ class AuditWindow:
             profile, text="Система · Сеть · Отчёт", text_color=p["muted"],
             font=("Segoe UI", 8), anchor="w",
         ).pack(fill=X, padx=12)
+        ctk.CTkLabel(
+            profile, text="ИСТОЧНИК УЯЗВИМОСТЕЙ", text_color=p["muted"],
+            font=("Segoe UI Semibold", 7), anchor="w",
+        ).pack(fill=X, padx=12, pady=(10, 3))
+        self.vulnerability_source_selector = ctk.CTkOptionMenu(
+            profile,
+            values=list(VULNERABILITY_SOURCE_TEXT.values()),
+            command=self._set_vulnerability_source_mode,
+            height=27,
+            corner_radius=7,
+            fg_color="#E1F2F0",
+            button_color=p["teal"],
+            button_hover_color=p["teal_hover"],
+            text_color=p["header_deep"],
+            dropdown_fg_color="#FFFFFF",
+            dropdown_text_color=p["text"],
+            font=("Segoe UI Semibold", 8),
+            dropdown_font=("Segoe UI", 8),
+        )
+        self.vulnerability_source_selector.set(VULNERABILITY_SOURCE_TEXT[VULNERABILITY_SOURCE_AUTO])
+        self.vulnerability_source_selector.pack(fill=X, padx=12, pady=(0, 10))
         rail_footer = ctk.CTkFrame(rail, fg_color="transparent")
         rail_footer.pack(side="bottom", fill=X, padx=16, pady=16)
         self.rail_note = ctk.CTkLabel(
@@ -2306,6 +2336,7 @@ class AuditWindow:
 
     def _start(self, online_sources: bool, network_only: bool = False) -> None:
         mode = self._selected_vulnerability_mode()
+        source_mode = self._selected_vulnerability_source_mode()
         network_scan = self._selected_network_scan_config()
         if network_only and network_scan is None:
             network_scan = self._build_default_network_only_scan_config()
@@ -2317,12 +2348,10 @@ class AuditWindow:
         token = self._begin_operation(status)
         self._log("=== Аудит сети ===" if network_only else "=== Полный аудит ===")
         self._log(f"Режим уязвимостей: {VULNERABILITY_MODE_TEXT[mode]}")
+        self._log(f"Источник уязвимостей: {VULNERABILITY_SOURCE_TEXT[source_mode]}")
         if network_scan is not None and hasattr(self, "root"):
             self._start_network_scan_live_window(network_scan, network_only)
-        if network_scan is not None or network_only:
-            thread_args = (online_sources, mode, token, network_scan, network_only)
-        else:
-            thread_args = (online_sources, mode, token)
+        thread_args = (online_sources, mode, token, network_scan, network_only, source_mode)
         thread = threading.Thread(
             target=self._run_background,
             args=thread_args,
@@ -2352,6 +2381,23 @@ class AuditWindow:
         if mode in VULNERABILITY_MODE_TEXT:
             return mode
         return VULNERABILITY_MODE_FULL
+
+    def _set_vulnerability_source_mode(self, label: str) -> None:
+        for mode, text in VULNERABILITY_SOURCE_TEXT.items():
+            if label == text:
+                self.vulnerability_source_mode.set(mode)
+                return
+        self.vulnerability_source_mode.set(VULNERABILITY_SOURCE_AUTO)
+
+    def _selected_vulnerability_source_mode(self) -> str:
+        variable = getattr(self, "vulnerability_source_mode", None)
+        value = variable.get() if variable is not None else VULNERABILITY_SOURCE_AUTO
+        if value in VULNERABILITY_SOURCE_TEXT:
+            return value
+        for mode, text in VULNERABILITY_SOURCE_TEXT.items():
+            if value == text:
+                return mode
+        return VULNERABILITY_SOURCE_AUTO
 
     def _selected_network_scan_config(self) -> NetworkScanConfig | None:
         self._ensure_network_state()
@@ -4562,7 +4608,7 @@ class AuditWindow:
         except Exception:
             return
 
-    def _append_network_scan_event(self, message: str) -> None:
+    def _append_network_scan_event(self, message: str, render: bool = True) -> None:
         event = str(message or "").strip()
         if not event:
             return
@@ -4575,7 +4621,8 @@ class AuditWindow:
         status = self._network_live_status_for_event(event) or self._network_live_status.get()
         if status:
             self._network_live_status.set(status)
-        self._render_network_scan_live_dashboard(status)
+        if render:
+            self._render_network_scan_live_dashboard(status)
 
     def _set_network_live_report_path(self, path_value: str | None) -> None:
         if not self._network_live_report_button or not path_value:
@@ -4636,6 +4683,7 @@ class AuditWindow:
         cancel_token: CancellationToken | None = None,
         network_scan: NetworkScanConfig | None = None,
         network_only: bool = False,
+        vulnerability_source_mode: str = VULNERABILITY_SOURCE_AUTO,
     ) -> None:
         try:
             result = run_audit(
@@ -4643,6 +4691,7 @@ class AuditWindow:
                 output_dir=self.output_dir.get(),
                 online_sources=online_sources,
                 vulnerability_mode=vulnerability_mode,
+                vulnerability_source_mode=vulnerability_source_mode,
                 network_scan=network_scan,
                 network_only=network_only,
                 open_report=False,
@@ -4775,11 +4824,14 @@ class AuditWindow:
 
     def _drain_messages(self) -> None:
         self._ensure_network_state()
-        while True:
+        processed = 0
+        network_dashboard_dirty = False
+        while processed < 64:
             try:
                 message = self.messages.get_nowait()
             except queue.Empty:
                 break
+            processed += 1
             if isinstance(message, BatchProgress):
                 finished = message.stage in {"completed", "failed"}
                 completed = message.index if finished else message.index - 1
@@ -4825,12 +4877,16 @@ class AuditWindow:
                     value=progress_value_for_message(message, self._current_progress_value())
                 )
                 if self._network_live_window:
-                    self._append_network_scan_event(message)
+                    self._append_network_scan_event(message, render=False)
+                    network_dashboard_dirty = True
                 progress_status = progress_status_for_message(message)
                 if progress_status:
                     self._set_progress_status(progress_status)
                 self._log(message)
-        self.root.after(200, self._drain_messages)
+        if network_dashboard_dirty and self._network_live_window:
+            self._render_network_scan_live_dashboard(self._network_live_status.get())
+        delay_ms = 10 if not self.messages.empty() else 200
+        self.root.after(delay_ms, self._drain_messages)
 
     def _log(self, message: str) -> None:
         self.log.configure(state="normal")

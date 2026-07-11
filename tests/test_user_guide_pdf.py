@@ -69,6 +69,24 @@ class UserGuidePdfTests(unittest.TestCase):
         self.assertNotIn("DeltaV", vulnerability_page)
         self.assertNotIn("12.03.0001", vulnerability_page)
 
+    def test_vulnerability_page_documents_source_selection_and_online_budget(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "build_user_guide_pdf.py").read_text(encoding="utf-8")
+        vulnerability_page = source.split("# Page 7 - vulnerability sources", 1)[1].split(
+            "# Page 8 - batch HTML and cancellation", 1
+        )[0]
+
+        for text in (
+            "Авто и Только локальная база",
+            "Только онлайн",
+            "vulnerability_sources.db",
+            "запрещает HTTP/curl",
+            "До 6 запросов NVD",
+            "1 запроса ФСТЭК",
+            "тайм-ауты 10/6 секунд",
+        ):
+            self.assertIn(text, vulnerability_page)
+
     def test_network_page_documents_local_profile_and_process_cleanup(self) -> None:
         root = Path(__file__).resolve().parents[1]
         source = (root / "scripts" / "build_user_guide_pdf.py").read_text(

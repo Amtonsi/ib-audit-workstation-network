@@ -33,17 +33,24 @@ class VulnerabilitySourceClient:
     cisa_kev_url = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
     nvd_url = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
-    def __init__(self, cache: SnapshotCache | None = None, online: bool = True):
+    def __init__(
+        self,
+        cache: SnapshotCache | None = None,
+        online: bool = True,
+        request_timeout: int = 10,
+    ):
         self.cache = cache
         self.online = online
+        self.request_timeout = max(1, int(request_timeout))
         self.used_snapshots: list[SourceSnapshot] = []
 
-    def fetch_json(self, url: str, timeout: int = 25) -> dict[str, Any]:
+    def fetch_json(self, url: str, timeout: int | None = None) -> dict[str, Any]:
+        request_timeout = self.request_timeout if timeout is None else max(1, int(timeout))
         request = urllib.request.Request(
             validated_https_url(url),
             headers={"User-Agent": "IB-Audit-Desktop/0.1"},
         )
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # nosec B310
+        with urllib.request.urlopen(request, timeout=request_timeout) as response:  # nosec B310
             return json.loads(response.read().decode("utf-8", errors="replace"))
 
     def fetch_cisa_kev(self) -> tuple[list[dict[str, Any]], list[CollectorDiagnostic]]:
@@ -695,9 +702,10 @@ class VulnerabilityCorrelator:
         "base_board", "display_adapter", "network_adapter", "physical_disk", "processor",
         "network_service",
     }
-    def __init__(self, fstec_client=None, source_client=None):
+    def __init__(self, fstec_client=None, source_client=None, max_nvd_queries: int | None = None):
         self.fstec_client = fstec_client
         self.source_client = source_client
+        self.max_nvd_queries = None if max_nvd_queries is None else max(0, int(max_nvd_queries))
         self.used_snapshots: list[SourceSnapshot] = []
 
     def match_inventory(
@@ -777,6 +785,8 @@ class VulnerabilityCorrelator:
         token = cancel_token or CancellationToken()
         token.raise_if_cancelled()
         client = client or self.source_client or VulnerabilitySourceClient()
+        if progress:
+            progress("Источники уязвимостей: проверка CISA KEV")
         kev, diagnostics = client.fetch_cisa_kev()
         token.raise_if_cancelled()
         candidate_inventory = [obj for obj in inventory if obj.object_type in self.candidate_types]
@@ -800,10 +810,32 @@ class VulnerabilityCorrelator:
             for keyword, objects in self._keyword_groups(candidate_inventory)
             if not all(obj.uid in cpe_handled_uids for obj in objects)
         ]
-        if max_nvd_queries is not None:
-            keyword_groups = keyword_groups[:max_nvd_queries]
-        for keyword, objects in keyword_groups:
+        effective_query_limit = self.max_nvd_queries if max_nvd_queries is None else max(0, int(max_nvd_queries))
+        total_keyword_groups = len(keyword_groups)
+        if effective_query_limit is not None and total_keyword_groups > effective_query_limit:
+            keyword_groups = keyword_groups[:effective_query_limit]
+            diagnostics.append(
+                CollectorDiagnostic(
+                    "vulnerability_correlation",
+                    "warning",
+                    (
+                        f"Online NVD query budget applied: {len(keyword_groups)}/{total_keyword_groups}. "
+                        "Install or update the local vulnerability database for full coverage."
+                    ),
+                    "correlator",
+                )
+            )
+        active_keyword_groups = len(keyword_groups)
+        if isinstance(client, VulnerabilityDatabaseSourceClient):
+            nvd_progress_source = "локальная база"
+        elif bool(getattr(client, "online", False)):
+            nvd_progress_source = "онлайн-поиск"
+        else:
+            nvd_progress_source = "локальный кэш"
+        for index, (keyword, objects) in enumerate(keyword_groups, 1):
             token.raise_if_cancelled()
+            if progress:
+                progress(f"NVD: {nvd_progress_source} {index}/{active_keyword_groups}: {keyword}")
             first = objects[0]
             if hasattr(client, "fetch_nvd_for_object"):
                 records, diag = client.fetch_nvd_for_object(first)
@@ -813,6 +845,8 @@ class VulnerabilityCorrelator:
             diagnostics.extend(diag)
             matches.extend(self.match_inventory(objects, [], records))
         if hasattr(client, "fetch_fstec_matches"):
+            if progress:
+                progress("ФСТЭК БДУ: сопоставление по локальной базе")
             fstec_db_matches, fstec_db_diagnostics = client.fetch_fstec_matches(
                 candidate_inventory,
                 progress=progress,
@@ -821,6 +855,8 @@ class VulnerabilityCorrelator:
             matches.extend(fstec_db_matches)
             diagnostics.extend(fstec_db_diagnostics)
         if self.fstec_client is not None:
+            if progress:
+                progress("ФСТЭК БДУ: ограниченный онлайн-поиск")
             fstec_matches, fstec_diagnostics = self.fstec_client.match_inventory(
                 candidate_inventory,
                 progress=progress,
@@ -828,6 +864,8 @@ class VulnerabilityCorrelator:
             )
             matches.extend(fstec_matches)
             diagnostics.extend(fstec_diagnostics)
+        if progress:
+            progress("Оценка уязвимостей: корреляция завершена")
         deduped: list[VulnerabilityMatch] = []
         seen: set[tuple[str, str, str, str]] = set()
         for match in sorted(matches, key=lambda item: (not item.kev, -(item.cvss or 0), item.cve, item.affected_title)):

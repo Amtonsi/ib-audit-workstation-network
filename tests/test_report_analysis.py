@@ -14,7 +14,7 @@ from ib_audit.cancellation import CancellationToken
 from ib_audit.models import CollectorDiagnostic, VulnerabilityMatch
 from ib_audit.repository import SQLiteRepository
 from ib_audit.source_cache import SnapshotCache
-from ib_audit.vulnerabilities import VulnerabilityDatabaseSourceClient
+from ib_audit.vulnerabilities import VulnerabilityDatabaseSourceClient, VulnerabilitySourceClient
 from ib_audit.vulnerability_database import VulnerabilityDatabaseBuilder
 from tests.test_report_import import IB_AUDIT_HTML
 
@@ -173,8 +173,19 @@ class ReportAnalysisTests(unittest.TestCase):
 
         result = _create_vulnerability_correlator()
 
-        fstec_class.assert_called_once_with()
-        correlator_class.assert_called_once_with(fstec_client=fstec_client)
+        fstec_class.assert_called_once_with(
+            cache=None,
+            online=True,
+            max_queries=1,
+            max_pages=1,
+            max_details_per_query=2,
+            timeout=6,
+        )
+        kwargs = correlator_class.call_args.kwargs
+        self.assertIs(fstec_client, kwargs["fstec_client"])
+        self.assertIsInstance(kwargs["source_client"], VulnerabilitySourceClient)
+        self.assertEqual(6, kwargs["max_nvd_queries"])
+        self.assertEqual(10, kwargs["source_client"].request_timeout)
         self.assertEqual(correlator_class.return_value, result)
 
     @patch("ib_audit.app.VulnerabilityCorrelator")
@@ -184,9 +195,17 @@ class ReportAnalysisTests(unittest.TestCase):
 
         _create_vulnerability_correlator(cache=cache, online_sources=True, vulnerability_mode="full")
 
-        fstec_class.assert_called_once_with(cache=cache, online=True)
+        fstec_class.assert_called_once_with(
+            cache=cache,
+            online=True,
+            max_queries=1,
+            max_pages=1,
+            max_details_per_query=2,
+            timeout=6,
+        )
         source_client = correlator_class.call_args.kwargs["source_client"]
         self.assertTrue(source_client.online)
+        self.assertEqual(6, correlator_class.call_args.kwargs["max_nvd_queries"])
 
     @patch("ib_audit.app.VulnerabilityCorrelator")
     @patch("ib_audit.app.FstecBduClient")
@@ -209,7 +228,7 @@ class ReportAnalysisTests(unittest.TestCase):
         _create_vulnerability_correlator(
             cache=cache,
             online_sources=True,
-            vulnerability_mode="fast",
+            vulnerability_mode="full",
             vulnerability_db_path=db_path,
         )
 

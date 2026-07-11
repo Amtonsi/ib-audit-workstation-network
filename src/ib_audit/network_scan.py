@@ -841,7 +841,7 @@ def _collect_tshark_live_traffic(
                 csv_lines.append(line)
                 packet_rows += 1
                 sample_event = _packet_progress_event(row)
-                if sample_event and emitted_rows < 2000:
+                if sample_event and emitted_rows < 400:
                     _emit_progress(progress, sample_event)
                     emitted_rows += 1
         finally:

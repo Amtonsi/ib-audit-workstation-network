@@ -272,7 +272,7 @@ def build_pdf(output_path: str | Path) -> Path:
         panel_h = 42
         panels = [
             ("Источники проверки", ["CISA KEV", "NVD", "ФСТЭК"]),
-            ("Режим проверки уязвимостей", ["Полный онлайн", "Быстрый кэш"]),
+            ("Источник уязвимостей", ["Авто", "Локальная", "Онлайн"]),
             ("Папка отчётов", ["outputs"]),
         ]
         for idx, (title_text, tags) in enumerate(panels):
@@ -301,81 +301,7 @@ def build_pdf(output_path: str | Path) -> Path:
         c.drawString(content_x + 18, y + 56, "Assessing vulnerabilities...")
 
     def draw_cover_window(x: float, y: float, w: float, h: float) -> None:
-        c.setFillColor(colors.white)
-        c.setStrokeColor(line)
-        c.roundRect(x, y, w, h, 10, stroke=1, fill=1)
-
-        header_h = 56
-        rail_w = 100
-        c.setFillColor(colors.HexColor("#172126"))
-        c.rect(x, y + h - header_h, w, header_h, stroke=0, fill=1)
-        set_font(13, bold=True, color=colors.white)
-        c.drawString(x + 14, y + h - 28, "IB Audit Workstation")
-        set_font(6.5, color=colors.HexColor("#B8C4C9"))
-        c.drawString(x + 14, y + h - 43, "Рабочая станция ИБ")
-        c.setFillColor(teal)
-        c.rect(x + w - 72, y + h - 39, 56, 24, stroke=0, fill=1)
-        set_font(7.2, bold=True, color=colors.white)
-        c.drawCentredString(x + w - 44, y + h - 30, "Готово")
-
-        body_h = h - header_h
-        c.setFillColor(colors.white)
-        c.rect(x, y, rail_w, body_h, stroke=0, fill=1)
-        c.setStrokeColor(line)
-        c.line(x + rail_w, y, x + rail_w, y + body_h)
-        set_font(6.5, bold=True, color=muted)
-        c.drawString(x + 12, y + body_h - 24, "НОВЫЙ АНАЛИЗ")
-
-        def nav_button(text: str, yy: float, active: bool = False) -> None:
-            c.setFillColor(teal if active else colors.HexColor("#EDF2F4"))
-            c.rect(x + 12, yy, rail_w - 24, 24, stroke=0, fill=1)
-            set_font(6.7, bold=True, color=colors.white if active else ink)
-            c.drawCentredString(x + rail_w / 2, yy + 8, text)
-
-        nav_button("Полный аудит", y + body_h - 58, active=True)
-        nav_button("Проверить HTML", y + body_h - 88)
-        nav_button("Обновить базы", y + body_h - 118)
-        set_font(6.5, bold=True, color=muted)
-        c.drawString(x + 12, y + body_h - 152, "РЕЗУЛЬТАТЫ")
-        nav_button("Открыть отчёт", y + body_h - 186)
-        set_font(6.1, color=muted)
-        c.drawString(x + 12, y + 28, "Разработал: Абдрахманов")
-        c.drawString(x + 12, y + 16, "Амаль Даулетович")
-
-        content_x = x + rail_w + 12
-        content_w = w - rail_w - 24
-        panel_h = 36
-        for idx, (title_text, tag_text, tag_fill, tag_color) in enumerate(
-            [
-                ("Источники", "CISA / NVD / ФСТЭК", light_blue, blue),
-                ("Режим проверки", "Быстрый кэш", light_amber, amber),
-                ("Папка отчётов", "outputs", light_amber, amber),
-            ]
-        ):
-            yy = y + h - header_h - 18 - idx * 48 - panel_h
-            card(content_x, yy, content_w, panel_h, fill=colors.white, radius=5)
-            set_font(7.2, bold=True, color=ink)
-            c.drawString(content_x + 8, yy + 22, title_text)
-            c.setFillColor(tag_fill)
-            c.roundRect(content_x + 8, yy + 6, content_w - 16, 13, 6.5, stroke=0, fill=1)
-            set_font(6.2, bold=True, color=tag_color)
-            c.drawCentredString(content_x + content_w / 2, yy + 10, tag_text)
-
-        log_y = y + 20
-        log_h = 58
-        card(content_x, log_y, content_w, log_h, fill=colors.white, radius=5)
-        set_font(7.2, bold=True, color=ink)
-        c.drawString(content_x + 8, log_y + 42, "Журнал")
-        set_font(6.1, color=muted)
-        c.drawString(content_x + 8, log_y + 30, "Прогресс: аудит")
-        c.setFillColor(colors.HexColor("#DDE6E8"))
-        c.rect(content_x + 8, log_y + 20, content_w - 16, 6, stroke=0, fill=1)
-        c.setFillColor(teal)
-        c.rect(content_x + 8, log_y + 20, (content_w - 16) * 0.55, 6, stroke=0, fill=1)
-        c.setFillColor(colors.HexColor("#F8FAFB"))
-        c.rect(content_x + 8, log_y + 6, content_w - 16, 10, stroke=0, fill=1)
-        set_font(5.5, color=muted)
-        c.drawString(content_x + 12, log_y + 9, "Assessing vulnerabilities...")
+        draw_screenshot(MAIN_UI_IMAGE, x, y, w, h)
 
     # Page 1 - cover
     c.setFillColor(colors.HexColor("#172126"))
@@ -407,7 +333,7 @@ def build_pdf(output_path: str | Path) -> Path:
     c.drawString(205, y, f"Дата инструкции: {date.today().strftime('%d.%m.%Y')}")
     y -= 34
     draw_link("GitHub: Amtonsi/ib-audit-workstation-network", GITHUB_REPO, 205, y, size=12)
-    draw_cover_window(548, 112, 252, 308)
+    draw_cover_window(530, 164, 290, 178)
     c.showPage()
 
     # Page 2 - GitHub and quick start
@@ -500,6 +426,7 @@ def build_pdf(output_path: str | Path) -> Path:
     y = bullet_list(
         [
             "«Полный аудит» проверяет Windows, «Аудит сети» запускает только сетевые коллекторы.",
+            "В карточке профиля источник выбирается явно: Авто, Только локальная база или Только онлайн.",
             "Цели Nmap ограничены локальным узлом, пока пользователь явно не введёт другое разрешённое значение.",
             "Интерфейсы определяются автоматически и выбираются отдельными чекбоксами.",
             "Зелёная строка означает активный трафик; янтарная - физический линк без данных; серая - неактивный или виртуальный адаптер.",
@@ -546,7 +473,7 @@ def build_pdf(output_path: str | Path) -> Path:
         ),
         (
             "4. Выбрать режим",
-            "«Полный аудит» проверяет Windows. «Аудит сети» запускает только Nmap, захват и сетевой ИБ-анализ.",
+            "Выберите источник уязвимостей: Авто, Только локальная база или Только онлайн. Затем выберите полный или сетевой аудит.",
             light_amber,
             amber,
         ),
@@ -719,7 +646,7 @@ def build_pdf(output_path: str | Path) -> Path:
     c.showPage()
 
     # Page 7 - vulnerability sources
-    section_header("5. Источники уязвимостей и режимы", 7)
+    section_header("5. Источники уязвимостей и выбор базы", 7)
     x = margin
     y = page_height - 108
     set_font(15, bold=True)
@@ -728,33 +655,33 @@ def build_pdf(output_path: str | Path) -> Path:
     src_boxes = [
         ("CISA KEV", "каталог известных эксплуатируемых уязвимостей", light_blue, blue),
         ("NVD CVE", "bulk feeds, recent и modified snapshots", light_violet, violet),
-        ("ФСТЭК БДУ", "локальные vullist.xlsx и АСУ ТП; онлайн-сверка", light_amber, amber),
+        ("ФСТЭК БДУ", "SQLite, vullist.xlsx и АСУ ТП; ограниченный online fallback", light_amber, amber),
     ]
     for idx, (title_text, body_text, fill, color) in enumerate(src_boxes):
-        xx = x + idx * 250
-        label_box(title_text, body_text, xx, y - 68, 220, 68, fill=fill, title_color=color)
+        xx = x + idx * 245
+        label_box(title_text, body_text, xx, y - 68, 215, 68, fill=fill, title_color=color)
         if idx < len(src_boxes) - 1:
-            arrow(xx + 224, y - 34, xx + 244, y - 34, color=muted)
+            arrow(xx + 219, y - 34, xx + 239, y - 34, color=muted)
     y -= 98
     set_font(15, bold=True)
-    c.drawString(x, y, "Режимы в интерфейсе")
+    c.drawString(x, y, "Выбор источника в интерфейсе")
     y -= 24
     label_box(
-        "Полный онлайн ФСТЭК",
-        "Использует локальные NVD/CISA/FSTEC и онлайн-запросы ФСТЭК БДУ. Подходит для максимально полной проверки при наличии интернета.",
+        "Авто и Только локальная база",
+        "Авто предпочитает vulnerability_sources.db и переходит к online fallback только без БД. Локальный режим запрещает HTTP/curl и использует SQLite/кэш.",
         x,
         y - 72,
-        370,
+        345,
         72,
         fill=panel,
         title_color=teal,
     )
     label_box(
-        "Быстро: кэш NVD/CISA",
-        "Использует локальные NVD/CISA и импортированные XLSX ФСТЭК без длительного онлайн-поиска. Подходит для быстрой проверки.",
-        x + 410,
+        "Только онлайн",
+        "До 6 запросов NVD и 1 запроса ФСТЭК; 1 страница, 2 карточки, тайм-ауты 10/6 секунд. Прогресс показывает x/y, превышение бюджета пишется в диагностику.",
+        x + 373,
         y - 72,
-        370,
+        345,
         72,
         fill=panel,
         title_color=blue,
@@ -768,7 +695,7 @@ def build_pdf(output_path: str | Path) -> Path:
         "Для ПО и оборудования нормализуются производитель, название, модель и версия. Учитываются псевдонимы и ребрендинг: Acronis Backup сопоставляется с Acronis Cyber Backup. CPE Match: --with-cpe-match.",
         x,
         y - 108,
-        245,
+        225,
         108,
         fill=panel,
         title_color=teal,
@@ -776,9 +703,9 @@ def build_pdf(output_path: str | Path) -> Path:
     label_box(
         "Подтверждено и критично",
         "Если найдено несколько подходящих CPE-кандидатов, проверяется каждый. Критические находки отображаются только при подтверждённом совпадении продукта и версии с уязвимым диапазоном CVE.",
-        x + 270,
+        x + 245,
         y - 108,
-        245,
+        225,
         108,
         fill=light_green,
         title_color=green,
@@ -786,9 +713,9 @@ def build_pdf(output_path: str | Path) -> Path:
     label_box(
         "Потенциальный риск",
         "Для процессоров, BIOS и прошивок модель может совпасть, но версии firmware/microcode нет. Такой случай помечается как потенциальный риск.",
-        x + 540,
+        x + 490,
         y - 108,
-        245,
+        225,
         108,
         fill=light_amber,
         title_color=amber,

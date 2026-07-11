@@ -412,6 +412,39 @@ class VulnerabilityCorrelatorTests(unittest.TestCase):
         self.assertEqual(15, len(client.keywords))
         self.assertEqual("Tool 14 1.0", client.keywords[-1])
 
+    def test_configured_online_query_budget_caps_requests_and_reports_progress(self):
+        inventory = [
+            InventoryObject(
+                "s", "Installed Software", "software", f"Budget Tool {index}",
+                {"DisplayVersion": "1.0"}, "fixture",
+            )
+            for index in range(5)
+        ]
+
+        class CountingClient:
+            def __init__(self):
+                self.keywords = []
+                self.online = True
+
+            def fetch_cisa_kev(self):
+                return [], []
+
+            def fetch_nvd_keyword(self, keyword, limit=2000):
+                self.keywords.append(keyword)
+                return [], []
+
+        progress = []
+        client = CountingClient()
+        result = VulnerabilityCorrelator(max_nvd_queries=2).enrich_from_sources(
+            inventory,
+            client=client,
+            progress=progress.append,
+        )
+
+        self.assertEqual(2, len(client.keywords))
+        self.assertTrue(any("query budget" in item.message for item in result.diagnostics))
+        self.assertTrue(any("NVD: онлайн-поиск 1/2" in item for item in progress))
+
     def test_enrichment_skips_nvd_queries_for_unversioned_candidates(self):
         inventory = [
             InventoryObject("svc", "Services", "service", "Google Chrome Elevation Service", {"Name": "GoogleChromeElevationService"}, "fixture"),

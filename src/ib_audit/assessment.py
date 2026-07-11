@@ -63,7 +63,11 @@ class AssessmentService:
         token = cancel_token or CancellationToken()
         token.raise_if_cancelled()
         profile = detect_windows_profile(inventory)
+        if progress:
+            progress("Оценка конфигурации: локальные правила")
         rule_results = RuleEngine(load_rules_for_profile(profile.role)).evaluate(inventory, profile)
+        if progress:
+            progress("Оценка уязвимостей: корреляция источников")
         correlation = self.correlator.enrich_from_sources(
             inventory,
             progress=progress,
@@ -78,6 +82,8 @@ class AssessmentService:
             vulnerabilities, diagnostics = correlation
             vulnerability_coverage = {}
             snapshots = list(getattr(self.correlator, "used_snapshots", []))
+        if progress:
+            progress("Оценка уязвимостей: обработка результатов")
         by_title = {item.title: item for item in inventory}
         matched_uids: set[str] = set()
         for match in vulnerabilities:
