@@ -29,6 +29,15 @@ from .vulnerability_database import is_vulnerability_database
 from .version_expression import matches_version_expression
 
 
+def _has_lossy_question_marks(value: object) -> bool:
+    """Detect text already destroyed by a legacy Windows code page."""
+    text = str(value or "").strip()
+    if not text:
+        return False
+    question_count = text.count("?")
+    return "??" in text or (question_count >= 3 and question_count * 3 >= len(text))
+
+
 class VulnerabilitySourceClient:
     cisa_kev_url = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
     nvd_url = "https://services.nvd.nist.gov/rest/json/cves/2.0"
@@ -151,6 +160,15 @@ class VulnerabilityDatabaseSourceClient:
         obj: InventoryObject,
         limit: int = 2000,
     ) -> tuple[list[dict[str, Any]], list[CollectorDiagnostic]]:
+        if _has_lossy_question_marks(obj.title):
+            return [], [
+                CollectorDiagnostic(
+                    "vulnerability_sources",
+                    "warning",
+                    f"database skipped: damaged inventory title: {obj.title}",
+                    str(self.db_path),
+                )
+            ]
         identity = InventoryIdentityResolver().resolve(obj, [obj])
         aliases = self._affected_product_aliases(identity)
         if aliases:
@@ -276,6 +294,8 @@ class VulnerabilityDatabaseSourceClient:
             list[tuple[InventoryObject, InventoryIdentity]],
         ] = {}
         for obj in inventory:
+            if _has_lossy_question_marks(obj.title):
+                continue
             identity = resolver.resolve(obj, inventory)
             grouped.setdefault(identity.group_key, []).append((obj, identity))
         processed = 0
@@ -717,6 +737,8 @@ class VulnerabilityCorrelator:
         matches: list[VulnerabilityMatch] = []
         seen: set[tuple[str, str, str]] = set()
         for obj in inventory:
+            if _has_lossy_question_marks(obj.title):
+                continue
             for record in kev_records:
                 vendor = str(record.get("vendorProject", ""))
                 product = str(record.get("product", ""))
@@ -789,7 +811,28 @@ class VulnerabilityCorrelator:
             progress("Источники уязвимостей: проверка CISA KEV")
         kev, diagnostics = client.fetch_cisa_kev()
         token.raise_if_cancelled()
-        candidate_inventory = [obj for obj in inventory if obj.object_type in self.candidate_types]
+        damaged_inventory = [
+            obj
+            for obj in inventory
+            if obj.object_type in self.candidate_types and _has_lossy_question_marks(obj.title)
+        ]
+        candidate_inventory = [
+            obj
+            for obj in inventory
+            if obj.object_type in self.candidate_types and not _has_lossy_question_marks(obj.title)
+        ]
+        if damaged_inventory:
+            diagnostics.append(
+                CollectorDiagnostic(
+                    "vulnerability_correlation",
+                    "warning",
+                    (
+                        "Пропущены объекты с повреждёнными именами: "
+                        f"{len(damaged_inventory)}. Для них сопоставление уязвимостей небезопасно."
+                    ),
+                    "inventory",
+                )
+            )
         matches = self.match_inventory(candidate_inventory, kev, [])
         coverage: dict[str, VulnerabilityCoverage] = {}
         cpe_handled_uids: set[str] = set()
@@ -1380,6 +1423,8 @@ class VulnerabilityCorrelator:
         groups: dict[str, tuple[str, list[InventoryObject]]] = {}
         for obj in inventory:
             title = obj.title.strip()
+            if _has_lossy_question_marks(title):
+                continue
             version = str(obj.fields.get("DisplayVersion") or obj.fields.get("Version") or "").strip()
             if not version:
                 version = VulnerabilityCorrelator._version(obj).strip()

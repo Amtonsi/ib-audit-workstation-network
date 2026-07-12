@@ -70,13 +70,23 @@ def build_release_zip(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build release ZIP with EXE, vulnerability DB, snapshots, and guide.")
+    parser = argparse.ArgumentParser(description="Build a local licensed ZIP with EXE, vulnerability DB, snapshots, and guide.")
     parser.add_argument("--output", default="outputs/release/IBAuditWorkstation_release.zip")
     parser.add_argument("--app-dir", default="outputs/dist-full-audit/IBAuditWorkstation")
     parser.add_argument("--vulnerability-dir", default="outputs/vulnerability-database")
     parser.add_argument("--user-guide", default="outputs/release/IBAuditWorkstation_UserGuide_RU.pdf")
     parser.add_argument("--license-file", default="LICENSE")
+    parser.add_argument(
+        "--i-confirm-redistribution-rights",
+        action="store_true",
+        help="Confirm that every bundled third-party component may be redistributed in this product.",
+    )
     args = parser.parse_args()
+    if not args.i_confirm_redistribution_rights:
+        parser.error(
+            "Refusing to package an EXE without --i-confirm-redistribution-rights. "
+            "Public releases should use the source archive instead."
+        )
     path = build_release_zip(args.output, args.app_dir, args.vulnerability_dir, args.user_guide, args.license_file)
     print(path)
     return 0

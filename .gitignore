@@ -12,7 +12,8 @@ venv/
 # Local audit data and generated artifacts
 outputs/
 tmp/
-tools/
+tools/*
+!tools/README.md
 build/*
 !build/pyinstaller/
 build/pyinstaller/*

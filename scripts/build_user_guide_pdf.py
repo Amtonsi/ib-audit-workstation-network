@@ -318,7 +318,7 @@ def build_pdf(output_path: str | Path) -> Path:
     y = page_height - 238
     y = draw_wrapped(
         "Локальная read-only рабочая станция для аудита Windows, анализа HTML-отчётов, "
-        "проверки уязвимостей и контролируемого сетевого мониторинга Nmap + tshark.",
+        "проверки уязвимостей и контролируемого сетевого мониторинга с опциональными локальными интеграциями Nmap и tshark.",
         205,
         y,
         320,
@@ -352,9 +352,9 @@ def build_pdf(output_path: str | Path) -> Path:
     c.drawString(x + 416, y - 26, "Что публикуется")
     bullet_list(
         [
-            "исходный код, тесты, README, MIT-лицензия",
+            "исходный код, тесты, README, MIT-лицензия и THIRD_PARTY_NOTICES",
             "безопасные схемы и PNG-скриншоты только с тестовыми данными",
-            "скрипты сборки и GitHub Actions",
+            "скрипты сборки без сторонних бинарников и GitHub Actions",
         ],
         x + 416,
         y - 54,
@@ -404,7 +404,7 @@ def build_pdf(output_path: str | Path) -> Path:
     set_font(16, bold=True)
     c.drawString(x, y, "Готовая Windows-сборка")
     y = draw_wrapped(
-        "Если сборка опубликована в GitHub Releases, скачайте ZIP, полностью распакуйте папку "
+        "Если вы получили разрешённую локальную сборку от владельца лицензий, полностью распакуйте папку "
         "IBAuditWorkstation и запускайте IBAuditWorkstation.exe. Не запускайте EXE прямо из ZIP.",
         x,
         y - 24,
@@ -832,7 +832,7 @@ def build_pdf(output_path: str | Path) -> Path:
         ("CLI-аудит", "python run_audit.py --no-open"),
         ("Offline-аудит", "python run_audit.py --offline --no-open"),
         ("Обновление БД", "python scripts/update_vulnerability_database.py --output outputs\\vulnerability-database\nпереиспользует CPE Dictionary; большой CPE Match включается флагом --with-cpe-match"),
-        ("Сборка EXE", "python -m PyInstaller build\\pyinstaller\\IBAuditWorkstation.spec --noconfirm --clean --distpath outputs\\dist --workpath build\\pyinstaller\\work"),
+        ("Лицензированная сборка", "powershell -ExecutionPolicy Bypass -File scripts\\build_licensed_exe.ps1 -IConfirmRights"),
         ("Сборка PDF", "python scripts\\build_user_guide_pdf.py --output docs\\IBAuditWorkstation_UserGuide_RU.pdf"),
         ("Тесты", "python -m unittest discover -s tests"),
     ]
@@ -855,9 +855,9 @@ def build_pdf(output_path: str | Path) -> Path:
     set_font(13, bold=True, color=amber)
     c.drawString(x + 16, y - 24, "Важно про PyInstaller")
     draw_wrapped(
-        "Используйте готовый build\\pyinstaller\\IBAuditWorkstation.spec. Он добавляет rulepacks, ресурсы CustomTkinter "
-        "и локальные архивы tools\\nmap и tools\\wireshark. Драйвер Npcap не распространяется внутри EXE: при его отсутствии программа предлагает официальный установщик. "
-        "Каталог tools и результаты аудита не публикуются в Git.",
+        "Обычный build\\pyinstaller\\IBAuditWorkstation.spec не включает Nmap, Wireshark и Npcap. "
+        "Локальные инструменты добавляются только через scripts\\build_licensed_exe.ps1 после -IConfirmRights. "
+        "Npcap допускается только из tools\\npcap-oem. Каталог tools и локальный EXE не публикуются в Git.",
         x + 16,
         y - 44,
         table_w - 32,

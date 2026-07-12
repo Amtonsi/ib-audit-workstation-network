@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import zipfile
 from pathlib import Path
@@ -329,7 +330,53 @@ def hidden_subprocess_kwargs() -> dict[str, object]:
     }
 
 
+def _is_wmic_command(command: list[str]) -> bool:
+    if not command:
+        return False
+    return Path(str(command[0])).name.casefold() in {"wmic", "wmic.exe"}
+
+
+def _run_wmic_unicode_command(command: list[str], timeout: int) -> CommandResult:
+    """Preserve localized WMIC text when the app has no console attached."""
+    file_descriptor, output_name = tempfile.mkstemp(prefix="ib-audit-wmic-", suffix=".txt")
+    os.close(file_descriptor)
+    output_path = Path(output_name)
+    wmic_command = [str(command[0]), f"/OUTPUT:{output_path}", *command[1:]]
+    try:
+        proc = subprocess.run(
+            wmic_command,
+            capture_output=True,
+            text=False,
+            timeout=timeout,
+            shell=False,
+            **hidden_subprocess_kwargs(),
+        )
+        output_bytes = proc.stdout
+        if output_path.exists() and output_path.stat().st_size:
+            output_bytes = output_path.read_bytes()
+        return CommandResult(
+            command,
+            proc.returncode,
+            _decode_output(output_bytes),
+            _decode_output(proc.stderr),
+        )
+    except subprocess.TimeoutExpired as exc:
+        return CommandResult(
+            command,
+            124,
+            _decode_output(exc.stdout),
+            f"Command timed out after {timeout} seconds",
+            timed_out=True,
+        )
+    except Exception as exc:
+        return CommandResult(command, 1, "", str(exc))
+    finally:
+        output_path.unlink(missing_ok=True)
+
+
 def run_command(command: list[str], timeout: int = 20) -> CommandResult:
+    if os.name == "nt" and _is_wmic_command(command):
+        return _run_wmic_unicode_command(command, timeout)
     if _is_network_tool_command(command):
         return _run_tracked_network_tool_command(command, timeout)
     try:

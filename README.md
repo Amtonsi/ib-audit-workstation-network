@@ -285,13 +285,14 @@ tshark -i 3 -n -q -a duration:20 -T fields -E separator=, -E quote=d -E header=y
 
 Требования для сетевого режима:
 
-- готовый EXE уже содержит разрешённые portable-компоненты Nmap и tshark/Wireshark;
-- при запуске из исходников используются `tools/nmap` и `tools/wireshark`, затем системный `PATH` как резерв;
-- для драйверного захвата нужен Npcap; из-за лицензии OEM он не вшивается в EXE, а приложение предлагает официальный установщик при отсутствии драйвера;
+- публичный репозиторий и обычный профиль сборки не содержат бинарники Nmap, tshark/Wireshark или Npcap;
+- при запуске используются явно предоставленные локальные инструменты либо системный `PATH` как резерв;
+- лицензированная локальная сборка может включить Nmap и tshark только после явного подтверждения прав пользователя;
+- Npcap никогда не берётся из каталога Nmap и включается только из `tools/npcap-oem` при отдельном подтверждении;
 - запуск от администратора для более полного захвата трафика и определения сетевых сведений;
 - разрешение на сканирование выбранного диапазона.
 
-Каталог `tools/` содержит сторонние runtime-файлы и не публикуется в Git. Для автономной локальной сборки положите разрешённые к распространению portable-компоненты в `tools/nmap` и `tools/wireshark`; готовый `.spec` упакует их внутрь одного EXE. Папка `tools/_downloads` является только локальным кэшем и в сборку не входит.
+Каталог `tools/` содержит локальные сторонние runtime-файлы и не публикуется в Git. В репозитории отслеживается только [`tools/README.md`](tools/README.md). MIT-лицензия проекта не предоставляет прав на Nmap, Npcap или Wireshark; подробности приведены в [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## Выбор источника уязвимостей
 
@@ -384,12 +385,26 @@ python scripts/update_vulnerability_database.py --output outputs\vulnerability-d
 
 ## Сборка EXE
 
-Используйте готовый `.spec`: он добавляет rulepack-файлы, ресурсы CustomTkinter и локальные архивы `tools/nmap` и `tools/wireshark` в один EXE. Npcap в сборку не включается по лицензионным причинам.
+Обычный `.spec` использует профиль `community`: добавляет код проекта, rulepack-файлы и ресурсы CustomTkinter, но не включает сторонние сетевые бинарники.
 
 ```powershell
 python -m pip install pyinstaller
 python -m PyInstaller build\pyinstaller\IBAuditWorkstation.spec --noconfirm --clean --distpath outputs\dist --workpath build\pyinstaller\work
 ```
+
+Для локальной сборки владельцем необходимых прав положите компоненты в `tools/` по инструкции и выполните:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_licensed_exe.ps1 -IConfirmRights
+```
+
+Npcap OEM включается только отдельным параметром:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_licensed_exe.ps1 -IConfirmRights -IncludeNpcapOem
+```
+
+Скрипт ничего не скачивает, всегда исключает `npcap*.exe` из каталога Nmap и не проверяет юридическую действительность лицензии. Не публикуйте полученный EXE, если ваше разрешение не охватывает внешнее распространение конкретного продукта.
 
 Не регенерируйте spec через `--name ... --specpath`: PyInstaller заменит список `datas`, и собранное приложение не сможет загрузить правила аудита.
 
@@ -397,10 +412,10 @@ python -m PyInstaller build\pyinstaller\IBAuditWorkstation.spec --noconfirm --cl
 
 ```powershell
 python scripts\build_user_guide_pdf.py --output outputs\release\IBAuditWorkstation_UserGuide_RU.pdf
-python scripts\build_release_package.py --output outputs\release\IBAuditWorkstation_release.zip
+git archive --format=zip --output outputs\release\IBAuditWorkstation_source.zip HEAD
 ```
 
-Release ZIP может включать EXE, локальные источники уязвимостей, PDF-инструкцию, MIT-лицензию и manifest с SHA-256. Публикуйте ZIP только как отдельный GitHub Release после проверки, что внутри нет конфиденциальных результатов аудита.
+Публичный Release содержит только исходный архив GitHub. `scripts\build_release_package.py` предназначен для локального лицензированного комплекта и откажется включать EXE без параметра `--i-confirm-redistribution-rights`.
 
 ## Проверка качества
 
@@ -414,6 +429,6 @@ GitHub Actions также запускает тесты из `.github/workflows/
 
 ## Лицензия
 
-Проект распространяется по лицензии MIT.
+Собственный код проекта распространяется по лицензии MIT. Эта лицензия не распространяется на Nmap, Npcap, Wireshark и другие сторонние компоненты. Их использование и распространение регулируются отдельными условиями, перечисленными в [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 Copyright (c) 2026 Абдрахманов Амаль Даулетович.

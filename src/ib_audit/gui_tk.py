@@ -760,6 +760,7 @@ class AuditWindow:
             "ReferenceNavSelected.TButton": ("#E3F4F2", p["text"], "#D4ECE9"),
             "ReferenceQuiet.TButton": ("#E5F3F2", p["header_deep"], "#D4ECE9"),
             "ReferenceRun.TButton": (p["aqua"], p["header_deep"], "#76EBDD"),
+            "ReferenceRunBusy.TButton": ("#F59E0B", p["header_deep"], "#FBBF24"),
             "LivePill.TButton": ("#2A6670", "#F4FFFF", "#347983"),
             "LiveReport.TButton": (p["aqua"], p["header_deep"], "#76EBDD"),
         }
@@ -939,6 +940,8 @@ class AuditWindow:
         import_button.pack(fill=X, padx=12, pady=4)
         update_button = nav_button("Обновить базы", self._update_sources)
         update_button.pack(fill=X, padx=12, pady=4)
+        folder_button = nav_button("Открыть папку", self._open_folder)
+        folder_button.pack(fill=X, padx=12, pady=4)
         self.cancel_button = nav_button("Отменить", self._cancel_active)
         self.cancel_button.configure(state="disabled")
 
@@ -1111,6 +1114,8 @@ class AuditWindow:
             font=("Segoe UI Semibold", 8),
         )
         launch_button.pack(side=RIGHT, padx=12)
+        self.launch_button = launch_button
+        self._launch_button_normal_colors = (p["aqua"], "#76EBDD")
         self.progress = ttk.Progressbar(
             command, mode="determinate", maximum=100, value=0,
             style="Reference.Horizontal.TProgressbar",
@@ -1191,7 +1196,15 @@ class AuditWindow:
             rail, text="Обновить базы", command=self._update_sources,
             style="ReferenceNav.TButton", cursor="hand2",
         )
-        update_button.pack(fill=X)
+        update_button.pack(fill=X, pady=(0, 8))
+        folder_button = ttk.Button(
+            rail,
+            text="Открыть папку",
+            command=self._open_folder,
+            style="ReferenceNav.TButton",
+            cursor="hand2",
+        )
+        folder_button.pack(fill=X)
         self.cancel_button = ttk.Button(
             rail, text="Отменить", command=self._cancel_active,
             style="ReferenceNav.TButton", cursor="hand2", state="disabled",
@@ -1306,6 +1319,7 @@ class AuditWindow:
             style="ReferenceRun.TButton", cursor="hand2",
         )
         launch_button.pack(side=RIGHT)
+        self.launch_button = launch_button
         self.progress = ttk.Progressbar(
             command, mode="determinate", maximum=100, value=0,
             style="Reference.Horizontal.TProgressbar",
@@ -1418,7 +1432,7 @@ class AuditWindow:
         ).pack(fill=X, pady=(0, 8))
         ttk.Button(
             rail,
-            text="Открыть папку отчётов",
+            text="Открыть папку",
             command=self._open_folder,
             style="Secondary.TButton",
             cursor="hand2",
@@ -4753,6 +4767,35 @@ class AuditWindow:
         button_state = "disabled" if presentation.busy else "normal"
         for button in self.action_buttons:
             button.configure(state=button_state)
+        launch_button = getattr(self, "launch_button", None)
+        if launch_button is not None:
+            launch_text = "Работает" if presentation.busy else "Запустить"
+            try:
+                normal_fg, normal_hover = getattr(
+                    self,
+                    "_launch_button_normal_colors",
+                    ("#55E3D4", "#76EBDD"),
+                )
+                launch_button.configure(
+                    text=launch_text,
+                    fg_color="#F59E0B" if presentation.busy else normal_fg,
+                    hover_color="#FBBF24" if presentation.busy else normal_hover,
+                )
+            except Exception:
+                if presentation.busy:
+                    self.style.map(
+                        "ReferenceRunBusy.TButton",
+                        background=[("disabled", "#F59E0B"), ("active", "#FBBF24")],
+                        foreground=[("disabled", "#123E42")],
+                    )
+                launch_button.configure(
+                    text=launch_text,
+                    style=(
+                        "ReferenceRunBusy.TButton"
+                        if presentation.busy
+                        else "ReferenceRun.TButton"
+                    ),
+                )
         if presentation.busy:
             self._set_progress_status(f"Прогресс: {text}")
             self.progress.stop()
