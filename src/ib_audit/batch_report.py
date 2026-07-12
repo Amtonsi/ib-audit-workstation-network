@@ -343,10 +343,10 @@ class BatchHtmlReportBuilder:
 
     def _network_packet_list(self, item: BatchDocumentResult) -> str:
         flows = [obj for obj in item.inventory if obj.object_type == "network_capture"]
-        if not flows:
-            return ""
         services = [obj for obj in item.inventory if obj.object_type == "network_service"]
         adapters = [obj for obj in item.inventory if obj.object_type == "network_adapter"]
+        if not flows and not services and not adapters:
+            return ""
         builder = HtmlReportBuilder()
         packet_rows = builder._packet_rows_from_flows(flows)
         topology = builder._build_network_topology(services, flows, adapters)

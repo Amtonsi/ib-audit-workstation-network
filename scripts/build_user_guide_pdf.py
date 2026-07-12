@@ -853,13 +853,14 @@ def build_pdf(output_path: str | Path) -> Path:
     y = yy - 8
     card(x, y - 68, table_w, 68, fill=light_amber)
     set_font(13, bold=True, color=amber)
-    c.drawString(x + 16, y - 24, "Важно про PyInstaller")
+    c.drawString(x + 16, y - 24, "Наличие действующих лицензий обязательно")
     draw_wrapped(
-        "Обычный build\\pyinstaller\\IBAuditWorkstation.spec не включает Nmap, Wireshark и Npcap. "
-        "Локальные инструменты добавляются только через scripts\\build_licensed_exe.ps1 после -IConfirmRights. "
-        "Npcap допускается только из tools\\npcap-oem. Каталог tools и локальный EXE не публикуются в Git.",
+        "Для licensed-local сборки необходимы действующие права: для Nmap - NPSL/OEM или иное "
+        "письменное разрешение, для Npcap - Npcap OEM, для Wireshark/tshark - соблюдение GPLv2+. "
+        "Параметр -IConfirmRights, наличие файлов в tools и MIT-лицензия проекта не подтверждают и не "
+        "заменяют эти права. Без соответствующих лицензий используйте community-сборку без сторонних бинарников.",
         x + 16,
-        y - 44,
+        y - 40,
         table_w - 32,
         size=10,
         leading=13,

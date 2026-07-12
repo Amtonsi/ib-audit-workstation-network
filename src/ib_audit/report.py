@@ -70,7 +70,7 @@ class HtmlReportBuilder:
             results_by_uid[result.object_uid].append(result)
         network_objects = [
             obj for obj in inventory
-            if obj.object_type in {"network_service", "network_capture"}
+            if obj.object_type in {"network_service", "network_capture", "network_adapter"}
         ]
         if network_objects:
             ordered = [
